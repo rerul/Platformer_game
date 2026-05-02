@@ -12,24 +12,37 @@ const world = { width: 3000, height: 720 };
 
 // [2] 자산 관리 (Asset Management)
 const ASSETS = {
+    // 구조: Root/assets/images/파일명
     PLAYER_STAND: './assets/images/player_stand.png',
     PLAYER_MOVE: './assets/images/player_move.png',
     PLAYER_JUMP1: './assets/images/player_jump1.png',
     PLAYER_JUMP2: './assets/images/player_jump2.png'
 };
+
 const sprites = {};
 let imagesLoaded = 0;
 
 function loadAssets(callback) {
     const keys = Object.keys(ASSETS);
+    // 이미지 파일이 하나도 없을 경우를 대비해 예외 처리
+    if (keys.length === 0) return callback();
+
     keys.forEach(key => {
         sprites[key] = new Image();
         sprites[key].src = ASSETS[key];
-        sprites[key].onload = () => { if (++imagesLoaded === keys.length) callback(); };
-        sprites[key].onerror = () => { if (++imagesLoaded === keys.length) callback(); };
+        
+        sprites[key].onload = () => { 
+            console.log(`성공: ${key} 로드 완료`); // 디버깅용
+            if (++imagesLoaded === keys.length) callback(); 
+        };
+        
+        sprites[key].onerror = () => { 
+            // 깃허브 콘솔에서 어떤 경로를 찌르고 있는지 확인하기 위함
+            console.error(`실패: ${ASSETS[key]}를 찾을 수 없습니다. 대소문자나 폴더명을 확인하세요.`);
+            if (++imagesLoaded === keys.length) callback(); 
+        };
     });
 }
-
 // [3] 입력 감지 (Input Control)
 const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, e: false };
 
