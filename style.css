@@ -1,0 +1,24 @@
+/* style.css */
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #222;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#game-container {
+    /* 선명한 픽셀 아트를 위해 추가 */
+    image-rendering: pixelated; 
+    border: 4px solid #fff;
+}
+
+canvas {
+    display: block;
+    background-color: #87CEEB;
+    /* 브라우저 크기에 맞춰 반응형으로 작동하고 싶다면 아래 주석 해제 */
+    /* max-width: 100%; height: auto; */
+}
