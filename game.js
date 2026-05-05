@@ -19,7 +19,8 @@ const ASSETS = {
     ATTACK1: './assets/images/player_attack1.png',
     ATTACK2: './assets/images/player_attack2.png',
     JUMP_ATTACK1: './assets/images/player_jump_attack1.png',
-    JUMP_ATTACK2: './assets/images/player_jump_attack2.png'
+    JUMP_ATTACK2: './assets/images/player_jump_attack2.png',
+    STORY1: './assets/images/player_story1.png'  // 스탠딩 일러스트
 };
 
 const sprites = {};
@@ -32,17 +33,12 @@ function loadAssets(callback) {
     keys.forEach(key => {
         const img = new Image();
         img.src = ASSETS[key];
-        
-        // 브라우저에게 이 이미지를 미리 메모리에 풀어놓으라고 명령 (비동기 디코딩)
         img.decode().then(() => {
             sprites[key] = img;
             imagesLoaded++;
-            if (imagesLoaded === keys.length) {
-                callback();
-            }
+            if (imagesLoaded === keys.length) callback();
         }).catch(() => {
-            // 디코딩 실패 시(파일 없음 등)에도 일단 카운트는 올려서 게임 실행 보장
-            sprites[key] = img; 
+            sprites[key] = img;
             imagesLoaded++;
             if (imagesLoaded === keys.length) callback();
         });
@@ -54,13 +50,13 @@ const keys = { a: false, d: false, s: false, w: false, space: false, spacePresse
 window.addEventListener('mousedown', (e) => { 
     if (e.button === 0) {
         keys.mouseLeft = true; 
-        keys.mouseLeftPressed = true; // 새로 눌림 감지
+        keys.mouseLeftPressed = true;
     }
 });
 window.addEventListener('mouseup', (e) => { 
     if (e.button === 0) {
         keys.mouseLeft = false; 
-        keys.mouseLeftPressed = false; // 떼면 초기화
+        keys.mouseLeftPressed = false;
     }
 });
 
@@ -72,6 +68,7 @@ window.addEventListener('keydown', (e) => {
     if (key === 'w') keys.w = true;
     if (key === ' ' && !keys.spacePressed) { keys.space = true; keys.spacePressed = true; }
     if (key === 'e') handleEKey();
+    if (key === 'f') handleFKey();  // 대화 상호작용
 });
 window.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
@@ -114,7 +111,7 @@ const camera = { x: 0, y: 0 };
 
 // [SECTION 5] 지형 데이터 (Map / Platforms)
 const platforms = [
-    { x: 0, y: 670, width: 3000, height: 50, isGround: true }, // 메인 바닥
+    { x: 0, y: 670, width: 3000, height: 50, isGround: true },
     { x: 300, y: 520, width: 200, height: 20 },
     { x: 600, y: 400, width: 250, height: 20 },
     { x: 1000, y: 300, width: 200, height: 20 },
@@ -122,11 +119,33 @@ const platforms = [
     { x: 1800, y: 350, width: 200, height: 20 }
 ];
 
+// 표지판 데이터
+const signs = [
+    {
+        x: 350, y: 630,
+        width: 30, height: 40,
+        interactRange: 80,
+        dialogue: [
+            { speaker: '???', text: '너탁경구.' },
+            { speaker: '???', text: 'F키를 눌러서 대화를 진행할 수 있어.' },
+            { speaker: '???', text: '오른쪽으로 나아가봐.' }
+        ]
+    }
+];
 // [SECTION 6] 물리 연산 및 업데이트 (Update Logic)
-// [SECTION 6] 물리 연산 및 업데이트 (Update Logic)
+// [SECTION 6] 물리 연산 및 업데이트
 function update() {
+    updateDialogue();
     updateAfterimages();
     if (player.isDashing) createAfterimage();
+
+    // 대화 중 이동 잠금
+    if (dialogue.active) {
+        player.dx = 0;
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
 
     // 6-1: 공격 처리
     if (keys.mouseLeft && !player.isDashing) {
@@ -140,12 +159,9 @@ function update() {
         } else if (!player.hasAirAttacked && keys.mouseLeftPressed) {
             player.isAttacking = true;
             player.hasAirAttacked = true;
-            
-            // 점프 후 어느 정도 시간이 지났을 때만 반동 적용 (이전 중첩 방지 유지)
             if (player.jumpTimer > 6) {
                 player.dy = -9; 
             }
-            
             player.dx *= 0.2;
             player.attackFrame = 1;
             player.attackTimer = 15;
@@ -195,7 +211,7 @@ function update() {
         player.state = (keys.a || keys.d) ? 'walk' : 'idle';
     }
 
-    // 6-4: 수직 이동 및 중력 (중요 수정 포인트!)
+    // 6-4: 수직 이동 및 중력
     if (!player.isDashing) {
         if (keys.space && player.jumpCount < player.maxJumps) {
             if (keys.s && player.grounded) {
@@ -214,9 +230,6 @@ function update() {
         
         if (!player.grounded) player.jumpTimer++;
 
-        // --- 수정된 중력 로직 ---
-        // 하강 중(dy >= 0)이면서 공격 중일 때만 중력을 줄여 체공 효과를 줍니다.
-        // 상승 중(dy < 0)일 때는 공격 여부와 상관없이 100% 중력을 적용해 높이 튀는 것을 막습니다.
         let gravityForce = (player.isAttacking && player.dy >= 0) ? player.gravity * 0.4 : player.gravity;
         player.dy += gravityForce;
     } else {
@@ -268,14 +281,42 @@ function draw() {
         ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
     });
 
-    // 7-2: 잔상
+    // 7-2: 표지판 렌더링
+    signs.forEach(sign => {
+        // 기둥
+        ctx.fillStyle = '#8B5E3C';
+        ctx.fillRect(sign.x + sign.width / 2 - 4, sign.y + sign.height * 0.5, 8, sign.height * 0.5);
+        // 판
+        ctx.fillStyle = '#C8A96E';
+        ctx.strokeStyle = '#5C3A1E';
+        ctx.lineWidth = 2;
+        ctx.fillRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+        ctx.strokeRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+        // 판 위 텍스트
+        ctx.fillStyle = '#3B1F0A';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', sign.x + sign.width / 2, sign.y + sign.height * 0.38);
+
+        // 범위 내 있으면 F 안내 표시
+        const playerCX = player.x + player.width / 2;
+        const signCX = sign.x + sign.width / 2;
+        if (Math.abs(playerCX - signCX) < sign.interactRange) {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 13px monospace';
+            ctx.fillText('[F]', signCX, sign.y - 10);
+        }
+    });
+    ctx.textAlign = 'left';
+
+    // 7-3: 잔상
     if (typeof afterimages !== 'undefined') {
         afterimages.forEach(img => {
             drawSprite(img.imageKey, img.x, img.y, img.width, img.height, img.direction, img.opacity);
         });
     }
 
-    // 7-3: 플레이어 현재 이미지 키 결정
+    // 7-4: 플레이어 현재 이미지 키 결정
     let currentKey = 'PLAYER_STAND';
     
     if (player.isAttacking) {
@@ -302,20 +343,19 @@ function draw() {
 
     player.currentDrawingKey = currentKey;
 
-    // --- 수치 계산 (중첩 수치 정확히 유지) ---
     let drawWidth = player.width;
-    let drawHeight = player.height * 1.3; // 기본 1.3배
+    let drawHeight = player.height * 1.3;
 
     if (player.isAttacking) {
         if (currentKey === 'ATTACK2' || currentKey === 'JUMP_ATTACK2') {
-            drawWidth *= 1.69;  // 1.3 * 1.3
-            drawHeight *= 1.32; // 1.1 * 1.2
+            drawWidth *= 1.69;
+            drawHeight *= 1.32;
         } else {
             drawWidth *= 1.3;
             drawHeight *= 1.1;
         }
     } else if (player.state === 'walk') {
-        drawWidth *= 1.3; // 이동 중 가로 1.2배
+        drawWidth *= 1.3;
     }
 
     let drawX = player.x - (drawWidth - player.width) / 2;
@@ -323,7 +363,7 @@ function draw() {
 
     drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, player.direction, player.isInvincible ? 0.6 : 1);
 
-    // 7-4: 투사체
+    // 7-5: 투사체
     if (typeof projectile !== 'undefined' && projectile.active) {
         ctx.fillStyle = 'yellow';
         ctx.beginPath();
@@ -332,14 +372,14 @@ function draw() {
     }
 
     ctx.restore();
+
+    // 7-6: UI (카메라 변환 밖에서 그림)
     if (typeof drawUI === 'function') drawUI();
+    if (typeof drawDialogue === 'function') drawDialogue();
 }
 
-/** 렌더링 도우미 */
 function drawSprite(key, x, y, w, h, dir, alpha) {
     const img = sprites[key];
-    
-    // 핵심 변경: 이미지가 완벽히 준비되지 않았다면 'STAND' 이미지를 대신 그려서 붉은색 방지
     const fallbackImg = sprites['PLAYER_STAND'];
     const targetImg = (img && img.complete && img.naturalWidth !== 0) ? img : fallbackImg;
 
@@ -355,7 +395,6 @@ function drawSprite(key, x, y, w, h, dir, alpha) {
         }
         ctx.restore();
     } else {
-        // 모든 수단이 실패했을 때만 붉은색 (보통 발생 안 함)
         ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
         ctx.fillRect(x, y, w, h);
     }
@@ -462,6 +501,169 @@ function updateAfterimages() {
         }
     }
 }
+// [SECTION 11] 대화 시스템 (Dialogue System)
+const dialogue = {
+    active: false,
+    lines: [],
+    currentLine: 0,
+    displayText: '',
+    charIndex: 0,
+    typingSpeed: 2,
+    typingTimer: 0,
+    isFinished: false,
+    speakerName: ''
+};
 
+function handleFKey() {
+    if (dialogue.active) {
+        if (!dialogue.isFinished) {
+            dialogue.displayText = dialogue.lines[dialogue.currentLine].text;
+            dialogue.charIndex = dialogue.displayText.length;
+            dialogue.isFinished = true;
+        } else {
+            dialogue.currentLine++;
+            if (dialogue.currentLine >= dialogue.lines.length) {
+                dialogue.active = false;
+            } else {
+                const line = dialogue.lines[dialogue.currentLine];
+                dialogue.speakerName = line.speaker || '';
+                dialogue.displayText = '';
+                dialogue.charIndex = 0;
+                dialogue.isFinished = false;
+            }
+        }
+        return;
+    }
+
+    const playerCX = player.x + player.width / 2;
+    const playerBottom = player.y + player.height; // 플레이어 발바닥 Y
+
+    for (const sign of signs) {
+        const signCX = sign.x + sign.width / 2;
+        const signBottom = sign.y + sign.height;   // 표지판 바닥 Y
+
+        const inRangeX = Math.abs(playerCX - signCX) < sign.interactRange;
+        const inRangeY = playerBottom >= sign.y && playerBottom <= signBottom + 80; // 표지판 높이 ± 여유
+
+        if (inRangeX && inRangeY) {
+            const firstLine = sign.dialogue[0];
+            dialogue.active = true;
+            dialogue.lines = sign.dialogue;
+            dialogue.currentLine = 0;
+            dialogue.speakerName = firstLine.speaker || '';
+            dialogue.displayText = '';
+            dialogue.charIndex = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished = false;
+            break;
+        }
+    }
+}
+
+function updateDialogue() {
+    if (!dialogue.active || dialogue.isFinished) return;
+    dialogue.typingTimer++;
+    if (dialogue.typingTimer >= dialogue.typingSpeed) {
+        dialogue.typingTimer = 0;
+        const fullText = dialogue.lines[dialogue.currentLine].text;
+        if (dialogue.charIndex < fullText.length) {
+            dialogue.displayText += fullText[dialogue.charIndex];
+            dialogue.charIndex++;
+        }
+        if (dialogue.charIndex >= fullText.length) {
+            dialogue.isFinished = true;
+        }
+    }
+}
+
+function drawDialogue() {
+    if (!dialogue.active) return;
+
+    const boxH = 200;
+    const boxY = canvas.height - boxH;
+    const boxW = canvas.width;
+
+    const illust = sprites['STORY1'];
+    const illustH = 480;
+    const illustW = 260;
+    const illustX = 60;
+    const illustY = canvas.height - illustH;
+
+    if (illust && illust.complete && illust.naturalWidth !== 0) {
+        ctx.drawImage(illust, illustX, illustY, illustW, illustH);
+    } else {
+        ctx.fillStyle = 'rgba(80, 60, 120, 0.5)';
+        ctx.fillRect(illustX, illustY, illustW, illustH);
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '13px monospace';
+        ctx.fillText('player_story1', illustX + 10, illustY + illustH / 2);
+    }
+
+    ctx.fillStyle = 'rgba(8, 8, 18, 0.92)';
+    ctx.fillRect(0, boxY, boxW, boxH);
+
+    ctx.strokeStyle = 'rgba(160, 130, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, boxY);
+    ctx.lineTo(boxW, boxY);
+    ctx.stroke();
+
+    if (dialogue.speakerName) {
+        const nameBoxX = 60;
+        const nameBoxY = boxY - 36;
+        const nameBoxPadX = 16;
+        const nameBoxPadY = 8;
+        ctx.font = 'bold 15px "Malgun Gothic", sans-serif';
+        const nameW = ctx.measureText(dialogue.speakerName).width + nameBoxPadX * 2;
+
+        ctx.fillStyle = 'rgba(8, 8, 18, 0.95)';
+        ctx.strokeStyle = 'rgba(160, 130, 255, 0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(nameBoxX, nameBoxY, nameW, 34, [6, 6, 0, 0]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(210, 190, 255, 1)';
+        ctx.fillText(dialogue.speakerName, nameBoxX + nameBoxPadX, nameBoxY + nameBoxPadY + 13);
+    }
+
+    const textX = 80;
+    const textY = boxY + 48;
+    const textMaxW = boxW - 160;
+
+    ctx.fillStyle = 'rgba(235, 230, 245, 1)';
+    ctx.font = '17px "Malgun Gothic", sans-serif';
+    wrapText(ctx, dialogue.displayText, textX, textY, textMaxW, 28);
+
+    if (dialogue.isFinished) {
+        const blink = Math.floor(Date.now() / 500) % 2 === 0;
+        if (blink) {
+            ctx.fillStyle = 'rgba(200, 175, 255, 0.9)';
+            ctx.font = '13px monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText('▼', boxW - 30, canvas.height - 20);
+            ctx.textAlign = 'left';
+        }
+    }
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = text.split('');
+    let line = '';
+    let currentY = y;
+    for (const char of words) {
+        const test = line + char;
+        if (ctx.measureText(test).width > maxWidth) {
+            ctx.fillText(line, x, currentY);
+            line = char;
+            currentY += lineHeight;
+        } else {
+            line = test;
+        }
+    }
+    ctx.fillText(line, x, currentY);
+}
 // [START] 게임 엔진 구동
 loadAssets(() => { update(); });
