@@ -121,9 +121,9 @@ const signs = [
         // cast: 이 대화에 등장하는 일러스트 목록 (1개면 단독 화자로 처리)
         cast: ['STORY1'],
         dialogue: [
-            { speaker: '???', text: '이 세계에 온 걸 환영해.',            speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: '???', text: 'F키를 눌러서 대화를 진행할 수 있어.', speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: '???', text: '오른쪽으로 나아가봐.',               speakerType: 'player', illustKey: 'STORY1' }
+            { speaker: '플레이어', text: '너탁경구.',            speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '플레이어', text: 'F키를 눌러서 대화를 진행할 수 있어.', speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '플레이어', text: '너비행탁경구.',               speakerType: 'player', illustKey: 'STORY1' }
         ]
     },
     {
@@ -133,9 +133,9 @@ const signs = [
         // cast: 2명이므로 양쪽 스탠딩 활성화
         cast: ['STORY1', 'NPC1_STORY'],
         dialogue: [
-            { speaker: '플레이어', text: '저기... 혹시 이 근처에 뭔가 있나요?',   speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '플레이어', text: '탁경구의정령',   speakerType: 'player', illustKey: 'STORY1' },
             { speaker: 'NPC',      text: '있지. 저 안쪽으로 들어가면 알게 될 거야.', speakerType: 'npc',    illustKey: 'NPC1_STORY' },
-            { speaker: '플레이어', text: '...고마워요.',                          speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '플레이어', text: '탁구치는탁경구탁쳐서떨구기',                          speakerType: 'player', illustKey: 'STORY1' },
             { speaker: 'NPC',      text: '돌아오지 않는 편이 나을 수도 있어.',      speakerType: 'npc',    illustKey: 'NPC1_STORY' }
         ]
     }
