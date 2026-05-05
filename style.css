@@ -1,4 +1,10 @@
-/* style.css */
+@font-face {
+    font-family: 'S-Core Dream';
+    src: url('./assets/fonts/SCDream4.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
 body {
     margin: 0;
     padding: 0;
@@ -11,14 +17,24 @@ body {
 }
 
 #game-container {
-    /* 선명한 픽셀 아트를 위해 추가 */
-    image-rendering: pixelated; 
+    image-rendering: pixelated;
     border: 4px solid #fff;
+    width: 100vw;
+    height: 56.25vw;
+    max-height: 100vh;
+    max-width: 177.78vh;
 }
 
 canvas {
     display: block;
     background-color: #87CEEB;
-    /* 브라우저 크기에 맞춰 반응형으로 작동하고 싶다면 아래 주석 해제 */
-    /* max-width: 100%; height: auto; */
+    width: 100%;
+    height: 100%;
+}
+/* 폰트를 DOM에 미리 렌더링해서 캔버스가 인식하게 강제 */
+body::before {
+    content: '.';
+    font-family: 'S-Core Dream';
+    position: absolute;
+    opacity: 0;
 }
