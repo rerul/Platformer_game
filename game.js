@@ -8,21 +8,27 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 canvas.width = 1920;
 canvas.height = 1080;
-const SCALE = 1.5; // 렌더링 스케일 (논리 해상도 1280x720 → 실제 1920x1080)
-const world = { width: 3000, height: 720 }; // 게임 로직 수치는 그대로 유지
+const SCALE = 1.5;
+
+// 현재 맵 인덱스
+let currentMapIndex = 0;
+
+// 월드 크기는 맵 데이터에서 가져오므로 여기선 초기화만
+const world = { width: 3000, height: 720 };
 // [SECTION 2] 자산 관리 (Asset Management)
 const ASSETS = {
-    PLAYER_STAND: './assets/images/player_stand.png',
-    PLAYER_MOVE1: './assets/images/player_move1.png',
-    PLAYER_MOVE2: './assets/images/player_move2.png',
-    PLAYER_JUMP1: './assets/images/player_jump1.png',
-    PLAYER_JUMP2: './assets/images/player_jump2.png',
-    ATTACK1: './assets/images/player_attack1.png',
-    ATTACK2: './assets/images/player_attack2.png',
-    JUMP_ATTACK1: './assets/images/player_jump_attack1.png',
-    JUMP_ATTACK2: './assets/images/player_jump_attack2.png',
-    STORY1: './assets/images/player_story1.png',
-    NPC1_STORY: './assets/images/npc1_story.png'
+    PLAYER_STAND:    './assets/images/player_stand.png',
+    PLAYER_MOVE1:    './assets/images/player_move1.png',
+    PLAYER_MOVE2:    './assets/images/player_move2.png',
+    PLAYER_JUMP1:    './assets/images/player_jump1.png',
+    PLAYER_JUMP2:    './assets/images/player_jump2.png',
+    ATTACK1:         './assets/images/player_attack1.png',
+    ATTACK2:         './assets/images/player_attack2.png',
+    JUMP_ATTACK1:    './assets/images/player_jump_attack1.png',
+    JUMP_ATTACK2:    './assets/images/player_jump_attack2.png',
+    STORY1:          './assets/images/player_story1.png',
+    NPC1_STORY:      './assets/images/npc1_story.png',
+    PROJECTILE:      './assets/images/player_projectile.png'
 };
 
 const sprites = {};
@@ -104,42 +110,97 @@ const player = {
 const camera = { x: 0, y: 0 };
 
 // [SECTION 5] 지형 데이터 (Map / Platforms)
-const platforms = [
-    { x: 0,    y: 670, width: 3000, height: 50, isGround: true },
-    { x: 300,  y: 520, width: 200,  height: 20 },
-    { x: 600,  y: 400, width: 250,  height: 20 },
-    { x: 1000, y: 300, width: 200,  height: 20 },
-    { x: 1400, y: 450, width: 300,  height: 20 },
-    { x: 1800, y: 350, width: 200,  height: 20 }
-];
-
-const signs = [
+// [SECTION 5] 지형 데이터 (Map / Platforms)
+const MAP_DATA = [
     {
-        x: 350, y: 630,
-        width: 30, height: 40,
-        interactRange: 80,
-        // cast: 이 대화에 등장하는 일러스트 목록 (1개면 단독 화자로 처리)
-        cast: ['STORY1'],
-        dialogue: [
-            { speaker: '플레이어', text: '너탁경구.',            speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: '플레이어', text: 'F키를 눌러서 대화를 진행할 수 있어.', speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: '플레이어', text: '너비행탁경구.',               speakerType: 'player', illustKey: 'STORY1' }
+        id: 0,
+        worldWidth: 3000,
+        worldHeight: 720,
+        bgColor: '#87CEEB',
+        platforms: [
+            { x: 0,    y: 670, width: 3000, height: 50,  type: 'solid' },
+            { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall'  },
+            { x: 3000, y: 0,   width: 60,   height: 520, type: 'wall'  },
+            { x: 300,  y: 520, width: 200,  height: 20,  type: 'platform' },
+            { x: 600,  y: 400, width: 250,  height: 20,  type: 'platform' },
+            { x: 1000, y: 300, width: 200,  height: 20,  type: 'platform' },
+            { x: 1400, y: 450, width: 300,  height: 20,  type: 'platform' },
+            { x: 1800, y: 350, width: 200,  height: 20,  type: 'platform' }
+        ],
+        signs: [
+            {
+                x: 350, y: 630,
+                width: 30, height: 40,
+                interactRange: 80,
+                cast: ['STORY1'],
+                dialogue: [
+                    { speaker: '???', text: '이 세계에 온 걸 환영해.',            speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: 'F키를 눌러서 대화를 진행할 수 있어.', speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: '오른쪽으로 나아가봐.',               speakerType: 'player', illustKey: 'STORY1' }
+                ]
+            },
+            {
+                x: 800, y: 630,
+                width: 30, height: 40,
+                interactRange: 80,
+                cast: ['STORY1', 'NPC1_STORY'],
+                dialogue: [
+                    { speaker: '플레이어', text: '저기... 혹시 이 근처에 뭔가 있나요?',    speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: 'NPC',      text: '있지. 저 안쪽으로 들어가면 알게 될 거야.', speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                    { speaker: '플레이어', text: '...고마워요.',                           speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: 'NPC',      text: '돌아오지 않는 편이 나을 수도 있어.',       speakerType: 'npc',    illustKey: 'NPC1_STORY' }
+                ]
+            }
+        ],
+        transitions: [
+            {
+                x: 2990, y: 520,
+                width: 80, height: 150,
+                toMap: 1,
+                spawnX: 100,
+                spawnY: 610,
+                direction: 'right'
+            }
         ]
     },
     {
-        x: 800, y: 630,
-        width: 30, height: 40,
-        interactRange: 80,
-        // cast: 2명이므로 양쪽 스탠딩 활성화
-        cast: ['STORY1', 'NPC1_STORY'],
-        dialogue: [
-            { speaker: '플레이어', text: '탁경구의정령',   speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: 'NPC',      text: '있지. 저 안쪽으로 들어가면 알게 될 거야.', speakerType: 'npc',    illustKey: 'NPC1_STORY' },
-            { speaker: '플레이어', text: '탁구치는탁경구탁쳐서떨구기',                          speakerType: 'player', illustKey: 'STORY1' },
-            { speaker: 'NPC',      text: '돌아오지 않는 편이 나을 수도 있어.',      speakerType: 'npc',    illustKey: 'NPC1_STORY' }
+        id: 1,
+        worldWidth: 3000,
+        worldHeight: 720,
+        bgColor: '#4a5568',
+        platforms: [
+            { x: 0,    y: 670, width: 3000, height: 50,  type: 'solid' },
+            { x: -60,  y: 0,   width: 60,   height: 520, type: 'wall'  },
+            { x: 3000, y: 0,   width: 60,   height: 720, type: 'wall'  },
+            { x: 400,  y: 500, width: 200,  height: 20,  type: 'platform' },
+            { x: 800,  y: 380, width: 250,  height: 20,  type: 'platform' },
+            { x: 1300, y: 280, width: 200,  height: 20,  type: 'platform' }
+        ],
+        signs: [],
+        transitions: [
+            {
+                x: -70, y: 520,
+                width: 80, height: 150,
+                toMap: 0,
+                spawnX: 2870,
+                spawnY: 610,
+                direction: 'left'
+            }
         ]
     }
 ];
+
+let platforms = [];
+let signs = [];
+
+function loadMap(mapIndex) {
+    const map       = MAP_DATA[mapIndex];
+    currentMapIndex = mapIndex;
+    world.width     = map.worldWidth;
+    world.height    = map.worldHeight;
+    platforms       = map.platforms;
+    signs           = map.signs;
+}
 // [SECTION 6] 물리 연산 및 업데이트 (Update Logic)
 // [SECTION 6] 물리 연산 및 업데이트
 function update() {
@@ -147,7 +208,13 @@ function update() {
     updateAfterimages();
     if (player.isDashing) createAfterimage();
 
-    // 대화 중 이동 잠금
+    if (mapTransition.active) {
+        updateMapTransition();
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
     if (dialogue.active) {
         player.dx = 0;
         draw();
@@ -159,7 +226,7 @@ function update() {
     if (keys.mouseLeft && !player.isDashing) {
         if (player.grounded) {
             player.isAttacking = true;
-            player.dx *= 0.3; 
+            player.dx *= 0.3;
             if (player.attackTimer <= 0) {
                 player.attackFrame = (player.attackFrame === 1) ? 2 : 1;
                 player.attackTimer = 10;
@@ -167,19 +234,17 @@ function update() {
         } else if (!player.hasAirAttacked && keys.mouseLeftPressed) {
             player.isAttacking = true;
             player.hasAirAttacked = true;
-            if (player.jumpTimer > 6) {
-                player.dy = -9; 
-            }
+            if (player.jumpTimer > 6) player.dy = -9;
             player.dx *= 0.2;
             player.attackFrame = 1;
             player.attackTimer = 15;
-            keys.mouseLeftPressed = false; 
+            keys.mouseLeftPressed = false;
         }
     }
-    
+
     if (player.attackTimer > 0) {
         player.attackTimer--;
-        if (!player.isDashing) player.dx *= 0.5; 
+        if (!player.isDashing) player.dx *= 0.5;
     } else {
         player.isAttacking = false;
     }
@@ -190,12 +255,10 @@ function update() {
         player.dx = dashDir * player.dashSpeed;
     } else {
         if (keys.a) {
-            let moveSpeed = player.isAttacking ? player.speed * 0.2 : player.speed;
-            player.dx = -moveSpeed;
+            player.dx = player.isAttacking ? -player.speed * 0.2 : -player.speed;
             player.direction = 'left';
         } else if (keys.d) {
-            let moveSpeed = player.isAttacking ? player.speed * 0.2 : player.speed;
-            player.dx = moveSpeed;
+            player.dx = player.isAttacking ? player.speed * 0.2 : player.speed;
             player.direction = 'right';
         } else {
             player.dx *= player.friction;
@@ -203,14 +266,11 @@ function update() {
         }
     }
 
-    // 6-3: 애니메이션 상태 결정
+    // 6-3: 애니메이션 상태
     if (player.isAttacking) {
-        if (player.grounded) {
-            player.state = `attack${player.attackFrame}`;
-        } else {
-            let airFrame = (player.attackTimer > 7) ? 1 : 2;
-            player.state = `jump_attack${airFrame}`;
-        }
+        player.state = player.grounded
+            ? `attack${player.attackFrame}`
+            : `jump_attack${(player.attackTimer > 7) ? 1 : 2}`;
     } else if (player.isDashing) {
         player.state = 'walk';
     } else if (!player.grounded) {
@@ -223,57 +283,98 @@ function update() {
     if (!player.isDashing) {
         if (keys.space && player.jumpCount < player.maxJumps) {
             if (keys.s && player.grounded) {
-                player.isDescending = true;
-                player.grounded = false;
-                player.y += 10;
+                const onSolid = platforms.some(plat =>
+                    (plat.type || 'platform') === 'solid' &&
+                    player.x + player.width > plat.x &&
+                    player.x < plat.x + plat.width &&
+                    Math.abs((player.y + player.height) - plat.y) <= 12
+                );
+                if (!onSolid) {
+                    player.isDescending = true;
+                    player.grounded = false;
+                    player.y += 10;
+                }
             } else {
                 player.dy = -player.jumpForce;
                 player.jumpCount++;
                 player.grounded = false;
                 player.jumpTimer = 0;
-                keys.mouseLeftPressed = false; 
+                keys.mouseLeftPressed = false;
             }
             keys.space = false;
         }
-        
         if (!player.grounded) player.jumpTimer++;
-
-        let gravityForce = (player.isAttacking && player.dy >= 0) ? player.gravity * 0.4 : player.gravity;
+        const gravityForce = (player.isAttacking && player.dy >= 0) ? player.gravity * 0.4 : player.gravity;
         player.dy += gravityForce;
+
+        // 낙하 속도 상한선 - 고속 낙하로 인한 지형 관통 방지
+        if (player.dy > 20) player.dy = 20;
     } else {
+        // 대시 중 수직 속도 완전 초기화
         player.dy = 0;
+        player.jumpTimer = 0;
     }
 
     player.x += player.dx;
     player.y += player.dy;
 
-    // 6-5: 지형 충돌 처리
+    // 6-5: 지형 충돌
     player.grounded = false;
     platforms.forEach(plat => {
-        if (player.x + player.width > plat.x && player.x < plat.x + plat.width &&
-            player.y + player.height <= plat.y + 10 && player.y + player.height + player.dy >= plat.y) {
-            if (!player.isDescending) {
+        const type = plat.type || 'platform';
+
+        if (type === 'wall') {
+            if (player.x + player.width > plat.x &&
+                player.x < plat.x + plat.width &&
+                player.y + player.height > plat.y &&
+                player.y < plat.y + plat.height) {
+                if (player.dx > 0) player.x = plat.x - player.width;
+                else if (player.dx < 0) player.x = plat.x + plat.width;
+                player.dx = 0;
+            }
+        } else if (type === 'solid') {
+            if (player.x + player.width > plat.x &&
+                player.x < plat.x + plat.width &&
+                player.y + player.height >= plat.y &&
+                player.y + player.height <= plat.y + 20 &&
+                player.dy >= 0) {
                 player.y = plat.y - player.height;
                 player.dy = 0;
                 player.grounded = true;
                 player.jumpCount = 0;
                 player.jumpTimer = 0;
-                player.hasAirAttacked = false; 
+                player.hasAirAttacked = false;
+                player.isDescending = false;
+            }
+        } else {
+            if (player.x + player.width > plat.x &&
+                player.x < plat.x + plat.width &&
+                player.y + player.height >= plat.y &&
+                player.y + player.height <= plat.y + 20 &&
+                player.dy >= 0) {
+                if (!player.isDescending) {
+                    player.y = plat.y - player.height;
+                    player.dy = 0;
+                    player.grounded = true;
+                    player.jumpCount = 0;
+                    player.jumpTimer = 0;
+                    player.hasAirAttacked = false;
+                }
             }
         }
     });
     if (player.dy > 5) player.isDescending = false;
+    // 6-6: 맵 전환 트리거 체크
+    checkMapTransitions();
 
-    // 6-6: 카메라 및 경계 설정
-    // [SECTION 6] 카메라 및 경계 설정 부분만 수정 (6-6)
+    // 6-7: 카메라 및 경계
     if (player.x < 0) player.x = 0;
     if (player.x + player.width > world.width) player.x = world.width - player.width;
-
-    // 논리 해상도(1280x720) 기준으로 카메라 계산
-    const logicalW = canvas.width / SCALE;   // 1920 / 1.5 = 1280
+    const logicalW = canvas.width / SCALE;
     camera.x = player.x - logicalW / 2 + player.width / 2;
     if (camera.x < 0) camera.x = 0;
     if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+
     projectile.update();
     draw();
     requestAnimationFrame(update);
@@ -282,18 +383,26 @@ function update() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
-    ctx.scale(SCALE, SCALE); // 모든 렌더링을 1.5배로 확대
+    ctx.scale(SCALE, SCALE);
     ctx.translate(-camera.x, 0);
 
-    // 7-1: 배경 및 플랫폼
-    ctx.fillStyle = '#87CEEB';
+    // 7-1: 배경
+    ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
     ctx.fillRect(0, 0, world.width, world.height);
+
+    // 7-2: 플랫폼
     platforms.forEach(plat => {
-        ctx.fillStyle = plat.isGround ? '#654321' : '#4A4A4A';
+        if (plat.isGround) {
+            ctx.fillStyle = '#654321';
+        } else if (plat.isWall) {
+            ctx.fillStyle = '#654321'; // 바닥과 같은 색
+        } else {
+            ctx.fillStyle = '#4A4A4A';
+        }
         ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
     });
 
-    // 7-2: 표지판 렌더링
+    // 7-3: 표지판
     signs.forEach(sign => {
         ctx.fillStyle = '#8B5E3C';
         ctx.fillRect(sign.x + sign.width / 2 - 4, sign.y + sign.height * 0.5, 8, sign.height * 0.5);
@@ -308,7 +417,7 @@ function draw() {
         ctx.fillText('!', sign.x + sign.width / 2, sign.y + sign.height * 0.38);
 
         const playerCX = player.x + player.width / 2;
-        const signCX = sign.x + sign.width / 2;
+        const signCX   = sign.x + sign.width / 2;
         if (Math.abs(playerCX - signCX) < sign.interactRange) {
             ctx.fillStyle = 'white';
             ctx.font = 'bold 13px monospace';
@@ -317,16 +426,15 @@ function draw() {
     });
     ctx.textAlign = 'left';
 
-    // 7-3: 잔상
+    // 7-4: 잔상
     if (typeof afterimages !== 'undefined') {
         afterimages.forEach(img => {
             drawSprite(img.imageKey, img.x, img.y, img.width, img.height, img.direction, img.opacity);
         });
     }
 
-    // 7-4: 플레이어 현재 이미지 키 결정
+    // 7-5: 플레이어 스프라이트
     let currentKey = 'PLAYER_STAND';
-
     if (player.isAttacking) {
         if (player.grounded) {
             currentKey = (player.attackFrame === 1) ? 'ATTACK1' : 'ATTACK2';
@@ -351,45 +459,44 @@ function draw() {
 
     player.currentDrawingKey = currentKey;
 
-    let drawWidth = player.width;
+    let drawWidth  = player.width;
     let drawHeight = player.height * 1.3;
 
     if (player.isAttacking) {
         if (currentKey === 'ATTACK2' || currentKey === 'JUMP_ATTACK2') {
-            drawWidth *= 1.69;
+            drawWidth  *= 1.69;
             drawHeight *= 1.32;
         } else {
-            drawWidth *= 1.3;
+            drawWidth  *= 1.3;
             drawHeight *= 1.1;
         }
     } else if (player.state === 'walk') {
         drawWidth *= 1.3;
     }
 
-    let drawX = player.x - (drawWidth - player.width) / 2;
-    let drawY = (player.y + player.height) - drawHeight;
-
+    const drawX = player.x - (drawWidth - player.width) / 2;
+    const drawY = (player.y + player.height) - drawHeight;
     drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, player.direction, player.isInvincible ? 0.6 : 1);
 
-    // 7-5: 투사체
-    if (typeof projectile !== 'undefined' && projectile.active) {
-        ctx.fillStyle = 'yellow';
-        ctx.beginPath();
-        ctx.arc(projectile.x + 10, projectile.y + 10, 10, 0, Math.PI * 2);
-        ctx.fill();
-    }
+    // 7-6: 투사체 (ctx.restore() 이전, scale 블록 안)
+    projectile.draw();
 
-    ctx.restore(); // scale 해제
+    ctx.restore(); // ← 이 위에 있어야 함
 
-    // 7-6: UI와 대화창은 scale 밖에서 그림 (별도로 1920x1080 기준으로 직접 작성)
+    // 7-7: UI / 대화창
     if (typeof drawUI === 'function') drawUI();
     if (typeof drawDialogue === 'function') drawDialogue();
-}
 
+    // 7-8: 페이드 오버레이
+    if (mapTransition.alpha > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${mapTransition.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+}
 function drawSprite(key, x, y, w, h, dir, alpha) {
-    const img = sprites[key];
+    const img         = sprites[key];
     const fallbackImg = sprites['PLAYER_STAND'];
-    const targetImg = (img && img.complete && img.naturalWidth !== 0) ? img : fallbackImg;
+    const targetImg   = (img && img.complete && img.naturalWidth !== 0) ? img : fallbackImg;
 
     if (targetImg && targetImg.complete) {
         ctx.save();
@@ -407,46 +514,112 @@ function drawSprite(key, x, y, w, h, dir, alpha) {
         ctx.fillRect(x, y, w, h);
     }
 }
-// [SECTION 8] 투사체 시스템 (Projectile)
+// [SECTION 8] 투사체 시스템 (Projectile System)
 const projectile = {
-    active: false,
-    x: 0,
-    y: 0,
-    width: 20,
-    height: 20,
-    dx: 0,
-    dy: 0,
-    speed: 15,       // 초기 발사 속도 (기존 25에서 15로 하향 조절)
-    friction: 0.96,  // 마찰력 (1에 가까울수록 천천히 느려짐, 0.9가량이면 금방 멈춤)
-    timer: 0,
-    maxLife: 200,    // 투사체 유지 시간
+    active:    false,
+    x:         0,
+    y:         0,
+    width:     28,
+    height:    28,
+    dx:        0,
+    speed:     22,
+    friction:  0.94,
+    minSpeed:  0.3,
+    angle:     0,
+    spinSpeed: 0.55,
+    minSpin:   0.04,
+    direction: 1,
 
-    launch: function(pX, pY, pDir) {
-        this.active = true;
-        this.x = pX + 20;
-        this.y = pY + 20;
-        this.timer = 0;
-        
-        // 바라보는 방향으로 초기 속도 부여
-        this.dx = (pDir === 'right' ? 1 : -1) * this.speed;
-        this.dy = 0;
+    fire(fromX, fromY, dir) {
+        this.active    = true;
+        this.x         = fromX;
+        this.y         = fromY;
+        this.direction = dir === 'left' ? -1 : 1;
+        this.dx        = this.speed * this.direction;
+        this.angle     = 0;
+        this.spinSpeed = 0.55;
     },
 
-    update: function() {
+    reset() {
+        this.active = false;
+        this.dx     = 0;
+        this.angle  = 0;
+    },
+
+    checkCollision() {
+        for (const plat of platforms) {
+            const type = plat.type || 'platform';
+            // platform 타입은 투사체 통과
+            if (type === 'platform') continue;
+
+            const overlapX = this.x + this.width  > plat.x &&
+                             this.x                < plat.x + plat.width;
+            const overlapY = this.y + this.height  > plat.y &&
+                             this.y                < plat.y + plat.height;
+
+            if (overlapX && overlapY) {
+                const fromLeft  = (this.x + this.width)  - plat.x;
+                const fromRight = (plat.x + plat.width)  - this.x;
+                const fromTop   = (this.y + this.height)  - plat.y;
+                const fromBot   = (plat.y + plat.height)  - this.y;
+                const minX = Math.min(fromLeft, fromRight);
+                const minY = Math.min(fromTop,  fromBot);
+
+                if (minX < minY) {
+                    this.dx = 0;
+                    this.x  = fromLeft < fromRight
+                        ? plat.x - this.width
+                        : plat.x + plat.width;
+                } else {
+                    this.dx = 0;
+                    this.y  = fromTop < fromBot
+                        ? plat.y - this.height
+                        : plat.y + plat.height;
+                }
+                return;
+            }
+        }
+    },
+
+    update() {
         if (!this.active) return;
 
-        // 마찰력 적용: 매 프레임마다 속도를 줄임
         this.dx *= this.friction;
-        this.dy *= this.friction;
+        this.x  += this.dx;
 
-        // 위치 업데이트
-        this.x += this.dx;
-        this.y += this.dy;
+        this.checkCollision();
 
-        // 속도가 거의 0에 가까워지거나 시간이 다 되면 소멸 (원할 경우)
-        if (++this.timer > this.maxLife || Math.abs(this.dx) < 0.1) {
-            // this.active = false; // 멈췄을 때 바로 없애고 싶으면 주석 해제
+        const speedRatio = Math.abs(this.dx) / this.speed;
+        this.spinSpeed   = this.minSpin + (0.55 - this.minSpin) * speedRatio;
+        this.angle      += this.spinSpeed * this.direction;
+
+        if (this.x < -100 || this.x > world.width + 100) {
+            this.reset();
         }
+    },
+
+    draw() {
+        if (!this.active) return;
+
+        const img  = sprites['PROJECTILE'];
+        const size = this.width;
+        const cx   = this.x + size / 2;
+        const cy   = this.y + size / 2;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(this.angle);
+
+        if (img && img.complete && img.naturalWidth !== 0) {
+            ctx.drawImage(img, -size / 2, -size / 2, size, size);
+        } else {
+            ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
     }
 };
 // [SECTION 9] 대시 및 순간이동 (Skills)
@@ -454,11 +627,10 @@ function startDash() {
     player.isDashing = true;
     player.isInvincible = true;
     player.lastDashTime = Date.now();
-    
-    // 공격 캔슬 확인 사살 및 대시 속도 부여
+
     const dashDir = (player.direction === 'right' ? 1 : -1);
     player.dx = dashDir * player.dashSpeed;
-    
+
     setTimeout(() => {
         player.isDashing = false;
         player.isInvincible = false;
@@ -473,7 +645,7 @@ function handleEKey() {
         player.dy = 0;
         projectile.active = false;
     } else if (now - player.lastTeleportTime > player.teleportCooldown) {
-        projectile.launch(player.x, player.y, player.direction);
+        projectile.fire(player.x, player.y, player.direction); // launch → fire
         player.lastTeleportTime = now;
     }
 }
@@ -721,7 +893,81 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     }
     ctx.fillText(line, x, currentY);
 }
+
+// [SECTION 12] 맵 전환 시스템 (Map Transition)
+// [SECTION 12] 맵 전환 시스템 (Map Transition)
+const mapTransition = {
+    active: false,
+    alpha:  0,
+    phase:  'none',
+    speed:  0.06,
+    toMap:  0,
+    spawnX: 100,
+    spawnY: 500
+};
+
+function checkMapTransitions() {
+    if (mapTransition.active) return;
+
+    const map = MAP_DATA[currentMapIndex];
+    if (!map.transitions) return;
+
+    for (const tr of map.transitions) {
+        if (
+            player.x + player.width  > tr.x &&
+            player.x                 < tr.x + tr.width &&
+            player.y + player.height > tr.y &&
+            player.y                 < tr.y + tr.height
+        ) {
+            mapTransition.active = true;
+            mapTransition.phase  = 'fadeOut';
+            mapTransition.alpha  = 0;
+            mapTransition.toMap  = tr.toMap;
+            mapTransition.spawnX = tr.spawnX;
+            mapTransition.spawnY = tr.spawnY;
+            break;
+        }
+    }
+}
+
+function updateMapTransition() {
+    if (!mapTransition.active) return;
+
+    if (mapTransition.phase === 'fadeOut') {
+        mapTransition.alpha += mapTransition.speed;
+        if (mapTransition.alpha >= 1) {
+            mapTransition.alpha = 1;
+
+            // 투사체 초기화 및 쿨타임 리셋
+            projectile.reset();
+            player.lastTeleportTime = 0;
+
+            loadMap(mapTransition.toMap);
+            player.x  = mapTransition.spawnX;
+            player.y  = mapTransition.spawnY;
+            player.dx = 0;
+            player.dy = 0;
+
+            const logicalW = canvas.width / SCALE;
+            camera.x = player.x - logicalW / 2 + player.width / 2;
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+
+            mapTransition.phase = 'fadeIn';
+        }
+    } else if (mapTransition.phase === 'fadeIn') {
+        mapTransition.alpha -= mapTransition.speed;
+        if (mapTransition.alpha <= 0) {
+            mapTransition.alpha  = 0;
+            mapTransition.phase  = 'none';
+            mapTransition.active = false;
+        }
+    }
+}
 // [START] 게임 엔진 구동
 document.fonts.ready.then(() => {
-    loadAssets(() => { update(); });
+    loadAssets(() => {
+        loadMap(0); // 맵 1부터 시작
+        update();
+    });
 });
