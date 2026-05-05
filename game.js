@@ -31,51 +31,109 @@ const ASSETS = {
     PROJECTILE:      './assets/images/player_projectile.png'
 };
 
+const SOUNDS = {
+    JUMP:      './assets/audio/player_jump.wav',
+    ATTACK1:   './assets/audio/player_attack1.wav',
+    ATTACK2:   './assets/audio/player_attack2.wav',
+    DASH:      './assets/audio/player_dash.wav',
+    TELEPORT:  './assets/audio/player_teleport.wav'
+};
+
 const sprites = {};
+const sounds  = {};
 let imagesLoaded = 0;
 
 function loadAssets(callback) {
-    const keys = Object.keys(ASSETS);
-    if (keys.length === 0) return callback();
-    keys.forEach(key => {
+    // 이미지 로드
+    const imgKeys = Object.keys(ASSETS);
+    let loaded = 0;
+    const total = imgKeys.length + Object.keys(SOUNDS).length;
+
+    imgKeys.forEach(key => {
         const img = new Image();
         img.src = ASSETS[key];
         img.decode().then(() => {
             sprites[key] = img;
-            imagesLoaded++;
-            if (imagesLoaded === keys.length) callback();
+            loaded++;
+            if (loaded === total) callback();
         }).catch(() => {
             sprites[key] = img;
-            imagesLoaded++;
-            if (imagesLoaded === keys.length) callback();
+            loaded++;
+            if (loaded === total) callback();
         });
     });
+
+    // 오디오 로드
+    Object.keys(SOUNDS).forEach(key => {
+        const audio = new Audio(SOUNDS[key]);
+        audio.preload = 'auto';
+        sounds[key] = audio;
+        // 오디오는 로드 실패해도 게임 진행에 영향 없도록
+        audio.addEventListener('canplaythrough', () => {
+            loaded++;
+            if (loaded === total) callback();
+        }, { once: true });
+        audio.addEventListener('error', () => {
+            loaded++;
+            if (loaded === total) callback();
+        }, { once: true });
+        audio.load();
+    });
+}
+
+function playSound(key) {
+    const snd = sounds[key];
+    if (!snd) return;
+    // 이미 재생 중이면 처음부터 다시
+    snd.currentTime = 0;
+    snd.play().catch(() => {});
 }
 // [SECTION 3] 입력 감지 (Input Control)
 const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false };
 
-window.addEventListener('mousedown', (e) => { 
+// 브라우저 자동재생 정책 해제 - 첫 상호작용 시 오디오 언락
+let audioUnlocked = false;
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    // 모든 사운드를 무음으로 0.001초 재생해서 브라우저 잠금 해제
+    Object.values(sounds).forEach(snd => {
+        snd.volume = 0;
+        snd.play().then(() => {
+            snd.pause();
+            snd.currentTime = 0;
+            snd.volume = 1;
+        }).catch(() => {});
+    });
+}
+
+window.addEventListener('mousedown', (e) => {
+    unlockAudio();
     if (e.button === 0) {
-        keys.mouseLeft = true; 
+        keys.mouseLeft = true;
         keys.mouseLeftPressed = true;
     }
 });
-window.addEventListener('mouseup', (e) => { 
+window.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
-        keys.mouseLeft = false; 
+        keys.mouseLeft = false;
         keys.mouseLeftPressed = false;
     }
 });
 
 window.addEventListener('keydown', (e) => {
+    unlockAudio();
     const key = e.key.toLowerCase();
     if (key === 'a') keys.a = true;
     if (key === 'd') keys.d = true;
     if (key === 's') keys.s = true;
     if (key === 'w') keys.w = true;
-    if (key === ' ' && !keys.spacePressed) { keys.space = true; keys.spacePressed = true; }
+    if (key === ' ' && !keys.spacePressed) {
+        keys.space = true;
+        keys.spacePressed = true;
+    }
     if (key === 'e') handleEKey();
-    if (key === 'f') handleFKey();  // 대화 상호작용
+    if (key === 'f') handleFKey();
 });
 window.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
@@ -89,8 +147,8 @@ window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const now = Date.now();
     if (!player.isDashing && now - player.lastDashTime > player.dashCooldown) {
-        player.isAttacking = false; 
-        player.attackTimer = 0;     
+        player.isAttacking = false;
+        player.attackTimer = 0;
         startDash();
     }
 });
@@ -104,7 +162,7 @@ const player = {
     state: 'idle', direction: 'right',
     isAttacking: false, attackFrame: 1, attackTimer: 0, hasAirAttacked: false,
     jumpTimer: 0,
-    dashSpeed: 18, dashDuration: 120, dashCooldown: 600, lastDashTime: 0,
+    dashSpeed: 18, dashDuration: 120, dashCooldown: 500, lastDashTime: 0,
     teleportCooldown: 3000, lastTeleportTime: 0
 };
 const camera = { x: 0, y: 0 };
@@ -230,6 +288,8 @@ function update() {
             if (player.attackTimer <= 0) {
                 player.attackFrame = (player.attackFrame === 1) ? 2 : 1;
                 player.attackTimer = 10;
+                // attack1/2 번갈아 재생
+                playSound(player.attackFrame === 1 ? 'ATTACK1' : 'ATTACK2');
             }
         } else if (!player.hasAirAttacked && keys.mouseLeftPressed) {
             player.isAttacking = true;
@@ -239,6 +299,7 @@ function update() {
             player.attackFrame = 1;
             player.attackTimer = 15;
             keys.mouseLeftPressed = false;
+            playSound('ATTACK1');
         }
     }
 
@@ -300,17 +361,15 @@ function update() {
                 player.grounded = false;
                 player.jumpTimer = 0;
                 keys.mouseLeftPressed = false;
+                playSound('JUMP');
             }
             keys.space = false;
         }
         if (!player.grounded) player.jumpTimer++;
         const gravityForce = (player.isAttacking && player.dy >= 0) ? player.gravity * 0.4 : player.gravity;
         player.dy += gravityForce;
-
-        // 낙하 속도 상한선 - 고속 낙하로 인한 지형 관통 방지
         if (player.dy > 20) player.dy = 20;
     } else {
-        // 대시 중 수직 속도 완전 초기화
         player.dy = 0;
         player.jumpTimer = 0;
     }
@@ -364,6 +423,7 @@ function update() {
         }
     });
     if (player.dy > 5) player.isDescending = false;
+
     // 6-6: 맵 전환 트리거 체크
     checkMapTransitions();
 
@@ -627,6 +687,7 @@ function startDash() {
     player.isDashing = true;
     player.isInvincible = true;
     player.lastDashTime = Date.now();
+    playSound('DASH');
 
     const dashDir = (player.direction === 'right' ? 1 : -1);
     player.dx = dashDir * player.dashSpeed;
@@ -644,9 +705,11 @@ function handleEKey() {
         player.y = projectile.y;
         player.dy = 0;
         projectile.active = false;
+        playSound('TELEPORT');
     } else if (now - player.lastTeleportTime > player.teleportCooldown) {
-        projectile.fire(player.x, player.y, player.direction); // launch → fire
+        projectile.fire(player.x, player.y, player.direction);
         player.lastTeleportTime = now;
+        playSound('TELEPORT');
     }
 }
 
