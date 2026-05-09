@@ -1,559 +1,1704 @@
-// ============================================================
-//  PIXEL RUSH — Platformer Game Engine
-// ============================================================
+/**
+ * [플랫포머 게임 통합 엔진 - 전투 및 유틸리티 강화 버전]
+ */
 
-const canvas  = document.getElementById('gameCanvas');
-const ctx     = canvas.getContext('2d');
+// [SECTION 1] 설정 및 전역 변수
+// [SECTION 1] 설정 및 전역 변수
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 1920;
+canvas.height = 1080;
+const SCALE = 1.5;
+let currentMapIndex = 0;
+const world = { width: 3000, height: 720 };
+const camera = { x: 0 };
 
-// ── Resize ──────────────────────────────────────────────────
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resize);
-resize();
-
-// ── Constants ───────────────────────────────────────────────
-const GRAVITY   = 0.55;
-const FRICTION  = 0.82;
-const TILE      = 40;        // tile size in world px
-const CAM_EASE  = 0.12;
-
-// ── Palette ─────────────────────────────────────────────────
-const C = {
-  sky1:    '#1a1a3e',
-  sky2:    '#0d0d1a',
-  star:    'rgba(255,255,255,0.8)',
-  ground:  '#2d6a4f',
-  groundT: '#40916c',
-  stone:   '#4a4e69',
-  stoneT:  '#6c7199',
-  player:  '#f7c948',
-  playerE: '#ff4f6d',
-  coin:    '#ffe066',
-  coinR:   '#f7c948',
-  enemy:   '#ff4f6d',
-  enemyD:  '#c91a3a',
-  flag:    '#4ade80',
-  flagP:   '#166534',
-  spike:   '#c9d1d9',
-  bg1:     '#22234a',
-  bg2:     '#181827',
+// tutorial 객체 - SECTION 6보다 먼저 선언해야 참조 오류 없음
+const tutorial = {
+    active:      false,
+    pages:       [],
+    currentPage: 0
+};
+// [SECTION 2] 자산 관리 (Asset Management)
+// [SECTION 2] 자산 관리 (Asset Management)
+const ASSETS = {
+    PLAYER_STAND:    './assets/images/player_stand.png',
+    PLAYER_MOVE1:    './assets/images/player_move1.png',
+    PLAYER_MOVE2:    './assets/images/player_move2.png',
+    PLAYER_JUMP1:    './assets/images/player_jump1.png',
+    PLAYER_JUMP2:    './assets/images/player_jump2.png',
+    ATTACK1:         './assets/images/player_attack1.png',
+    ATTACK2:         './assets/images/player_attack2.png',
+    JUMP_ATTACK1:    './assets/images/player_jump_attack1.png',
+    JUMP_ATTACK2:    './assets/images/player_jump_attack2.png',
+    STORY1:          './assets/images/player_story1.png',
+    NPC1_STORY:      './assets/images/npc1_story.png',
+    PROJECTILE:      './assets/images/player_projectile.png',
+    ENEMY1_STAND:    './assets/images/enemy1_stand.png',
+    ENEMY1_MOVE:     './assets/images/enemy1_move.png',
+    ENEMY1_ATTACK1:  './assets/images/enemy1_attack1.png',
+    ENEMY1_ATTACK2:  './assets/images/enemy1_attack2.png',
+    BOSS_STORY1:     './assets/images/boss_story1.png',
+    ENEMY1_ATTACK3: './assets/images/enemy1_attack3.png'
 };
 
-// ── Game State ───────────────────────────────────────────────
-let state = 'start';   // start | playing | dead | win
-let score = 0;
-let coins = 0;
-let lives = 3;
-let tick  = 0;
-
-// ── Camera ───────────────────────────────────────────────────
-const cam = { x: 0, y: 0, tx: 0, ty: 0 };
-
-// ── Input ────────────────────────────────────────────────────
-const keys = {};
-window.addEventListener('keydown', e => { keys[e.code] = true; });
-window.addEventListener('keyup',   e => { keys[e.code] = false; });
-
-// ── Stars (parallax bg) ─────────────────────────────────────
-const stars = Array.from({ length: 120 }, () => ({
-  x: Math.random() * 6000,
-  y: Math.random() * 400,
-  r: Math.random() * 1.5 + 0.5,
-  speed: Math.random() * 0.3 + 0.05,
-}));
-
-// ── Level Definition ─────────────────────────────────────────
-// Each platform: { x, y, w, h, type }   (world coords)
-// type: 'ground' | 'stone'
-const LEVEL = {
-  platforms: [
-    // ground floor
-    { x: 0,    y: 520, w: 600,  h: 40,  type: 'ground' },
-    { x: 700,  y: 520, w: 400,  h: 40,  type: 'ground' },
-    { x: 1200, y: 520, w: 300,  h: 40,  type: 'ground' },
-    { x: 1600, y: 520, w: 500,  h: 40,  type: 'ground' },
-    { x: 2200, y: 520, w: 600,  h: 40,  type: 'ground' },
-    { x: 2900, y: 520, w: 800,  h: 40,  type: 'ground' },
-    { x: 3800, y: 520, w: 600,  h: 40,  type: 'ground' },
-    { x: 4500, y: 520, w: 1000, h: 40,  type: 'ground' },
-    // elevated platforms
-    { x: 280,  y: 400, w: 160,  h: 20,  type: 'stone' },
-    { x: 520,  y: 330, w: 120,  h: 20,  type: 'stone' },
-    { x: 780,  y: 390, w: 140,  h: 20,  type: 'stone' },
-    { x: 980,  y: 300, w: 160,  h: 20,  type: 'stone' },
-    { x: 1250, y: 380, w: 120,  h: 20,  type: 'stone' },
-    { x: 1450, y: 290, w: 200,  h: 20,  type: 'stone' },
-    { x: 1700, y: 400, w: 140,  h: 20,  type: 'stone' },
-    { x: 1920, y: 320, w: 120,  h: 20,  type: 'stone' },
-    { x: 2120, y: 240, w: 160,  h: 20,  type: 'stone' },
-    { x: 2350, y: 360, w: 180,  h: 20,  type: 'stone' },
-    { x: 2600, y: 280, w: 140,  h: 20,  type: 'stone' },
-    { x: 2820, y: 200, w: 200,  h: 20,  type: 'stone' },
-    { x: 3100, y: 350, w: 160,  h: 20,  type: 'stone' },
-    { x: 3350, y: 260, w: 140,  h: 20,  type: 'stone' },
-    { x: 3600, y: 380, w: 120,  h: 20,  type: 'stone' },
-    { x: 3900, y: 300, w: 200,  h: 20,  type: 'stone' },
-    { x: 4150, y: 220, w: 160,  h: 20,  type: 'stone' },
-    { x: 4400, y: 350, w: 120,  h: 20,  type: 'stone' },
-  ],
-  coins: [
-    // ground level
-    80, 160, 240, 400, 480, 560, 720, 800, 880,
-    1000, 1080, 1250, 1330,
-    1450, 1530, 1610,
-    1700, 1780, 1860,
-    2000, 2080, 2160,
-    2350, 2430, 2510,
-    2600, 2680,
-    2900, 2980, 3060,
-    3200, 3280, 3360,
-    3500, 3580,
-    3900, 3980, 4060,
-    4200, 4280, 4360,
-    4520, 4600, 4680, 4760, 4840,
-  ].map(cx => ({ x: cx, y: 470, r: 10, collected: false })),
-  enemies: [
-    { x: 450,  y: 500, w: 36, h: 36, vx: 1.2, dir: 1, alive: true, left: 320,  right: 560 },
-    { x: 820,  y: 500, w: 36, h: 36, vx: 1.0, dir: 1, alive: true, left: 720,  right: 1060 },
-    { x: 1300, y: 500, w: 36, h: 36, vx: 1.4, dir: 1, alive: true, left: 1200, right: 1480 },
-    { x: 1750, y: 500, w: 36, h: 36, vx: 1.2, dir: 1, alive: true, left: 1620, right: 2080 },
-    { x: 2250, y: 500, w: 36, h: 36, vx: 1.6, dir: 1, alive: true, left: 2200, right: 2780 },
-    { x: 2950, y: 500, w: 36, h: 36, vx: 1.3, dir: 1, alive: true, left: 2900, right: 3400 },
-    { x: 3500, y: 500, w: 36, h: 36, vx: 1.5, dir: 1, alive: true, left: 3800, right: 4380 },
-    { x: 4200, y: 500, w: 36, h: 36, vx: 1.8, dir: 1, alive: true, left: 4500, right: 5400 },
-    // platform enemies
-    { x: 800,  y: 365, w: 32, h: 32, vx: 1.0, dir: 1, alive: true, left: 780, right: 920 },
-    { x: 1470, y: 265, w: 32, h: 32, vx: 1.2, dir: 1, alive: true, left: 1450, right: 1630 },
-    { x: 2840, y: 175, w: 32, h: 32, vx: 1.0, dir: 1, alive: true, left: 2820, right: 3010 },
-  ],
-  flag: { x: 5200, y: 220, w: 20, h: 300 },
-  spawnX: 60,
-  spawnY: 460,
-  levelEnd: 5400,
+const SOUNDS = {
+    JUMP:           { src: './assets/audio/player_jump.wav',      volume: 0.4 },
+    ATTACK1:        { src: './assets/audio/player_attack1.wav',   volume: 1.0 },
+    ATTACK2:        { src: './assets/audio/player_attack2.wav',   volume: 1.0 },
+    DASH:           { src: './assets/audio/player_dash.wav',      volume: 1.0 },
+    TELEPORT:       { src: './assets/audio/player_teleport.wav',  volume: 1.0 },
+    ENEMY1_ATTACK1: { src: './assets/audio/enemy1_attack1.wav',   volume: 1.0 },
+    ENEMY1_ATTACK2: { src: './assets/audio/enemy1_attack2.wav',   volume: 1.0 }
 };
 
-// Coin elevations on elevated platforms
-const platformCoins = [
-  { x: 310, y: 365 }, { x: 350, y: 365 }, { x: 390, y: 365 },
-  { x: 545, y: 295 }, { x: 585, y: 295 },
-  { x: 810, y: 355 }, { x: 850, y: 355 },
-  { x: 1010, y: 265 }, { x: 1050, y: 265 }, { x: 1090, y: 265 },
-  { x: 1480, y: 255 }, { x: 1520, y: 255 }, { x: 1560, y: 255 },
-  { x: 2145, y: 205 }, { x: 2185, y: 205 },
-  { x: 2850, y: 165 }, { x: 2890, y: 165 }, { x: 2930, y: 165 },
-  { x: 3380, y: 225 }, { x: 3420, y: 225 },
-  { x: 4170, y: 185 }, { x: 4210, y: 185 }, { x: 4250, y: 185 },
-];
-platformCoins.forEach(c => LEVEL.coins.push({ x: c.x, y: c.y, r: 10, collected: false }));
-
-// ── Player ────────────────────────────────────────────────────
-const player = {
-  x: LEVEL.spawnX, y: LEVEL.spawnY,
-  w: 28, h: 36,
-  vx: 0, vy: 0,
-  onGround: false,
-  jumps: 0,           // double jump
-  maxJumps: 2,
-  dir: 1,
-  invincible: 0,      // frames of invincibility after hit
-  squish: 1,          // visual squish on land
+const BGM = {
+    BGM1: './assets/audio/bgm1.mp3'
 };
 
-function spawnPlayer() {
-  player.x = LEVEL.spawnX;
-  player.y = LEVEL.spawnY;
-  player.vx = 0; player.vy = 0;
-  player.onGround = false;
-  player.jumps = 0;
-  player.invincible = 0;
-  player.squish = 1;
-}
+const sprites = {};
+const sounds  = {};
 
-// ── Particles ─────────────────────────────────────────────────
-const particles = [];
+// BGM 플레이어 - 나중에 맵/이벤트별 전환을 여기서 관리
+const bgmPlayer = {
+    current: null,   // 현재 재생 중인 Audio 객체
+    currentKey: '',  // 현재 재생 중인 BGM 키
 
-function spawnParticles(x, y, color, n = 8) {
-  for (let i = 0; i < n; i++) {
-    const angle = (Math.PI * 2 * i) / n + Math.random() * 0.5;
-    const speed = Math.random() * 4 + 2;
-    particles.push({
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 2,
-      life: 1, decay: Math.random() * 0.04 + 0.03,
-      r: Math.random() * 5 + 3,
-      color,
+    play(key, fadeIn = false) {
+        if (this.currentKey === key) return; // 이미 같은 곡이면 무시
+        const src = BGM[key];
+        if (!src) return;
+
+        this.stop();
+
+        const audio = new Audio(src);
+        audio.loop   = true;
+        audio.volume = fadeIn ? 0 : 0.6;
+        audio.play().catch(() => {});
+
+        if (fadeIn) {
+            let vol = 0;
+            const fade = setInterval(() => {
+                vol = Math.min(vol + 0.05, 0.6);
+                audio.volume = vol;
+                if (vol >= 0.6) clearInterval(fade);
+            }, 50);
+        }
+
+        this.current    = audio;
+        this.currentKey = key;
+    },
+
+    stop(fadeOut = false) {
+        if (!this.current) return;
+        if (fadeOut) {
+            const target = this.current;
+            const fade = setInterval(() => {
+                target.volume = Math.max(target.volume - 0.05, 0);
+                if (target.volume <= 0) {
+                    target.pause();
+                    clearInterval(fade);
+                }
+            }, 50);
+        } else {
+            this.current.pause();
+        }
+        this.current    = null;
+        this.currentKey = '';
+    },
+
+    // 다른 곡으로 전환 (페이드 아웃 후 페이드 인)
+    crossfade(key) {
+        this.stop(true);
+        setTimeout(() => this.play(key, true), 600);
+    }
+};
+
+function loadAssets(callback) {
+    const imgKeys = Object.keys(ASSETS);
+    const sndKeys = Object.keys(SOUNDS);
+    let loaded = 0;
+    const total = imgKeys.length + sndKeys.length;
+
+    imgKeys.forEach(key => {
+        const img = new Image();
+        img.src = ASSETS[key];
+        img.decode().then(() => {
+            sprites[key] = img;
+            loaded++;
+            if (loaded === total) callback();
+        }).catch(() => {
+            sprites[key] = img;
+            loaded++;
+            if (loaded === total) callback();
+        });
     });
-  }
+
+    sndKeys.forEach(key => {
+        const { src, volume } = SOUNDS[key];
+        const audio = new Audio(src);
+        audio.preload = 'auto';
+        audio.volume  = volume;
+        sounds[key]   = audio;
+        audio.addEventListener('canplaythrough', () => {
+            loaded++;
+            if (loaded === total) callback();
+        }, { once: true });
+        audio.addEventListener('error', () => {
+            loaded++;
+            if (loaded === total) callback();
+        }, { once: true });
+        audio.load();
+    });
 }
 
-// ── Collision helpers ─────────────────────────────────────────
-function rectOverlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x &&
-         a.y < b.y + b.h && a.y + a.h > b.y;
+function playSound(key) {
+    const snd = sounds[key];
+    if (!snd) return;
+    snd.currentTime = 0;
+    snd.play().catch(() => {});
+}
+// [SECTION 3] 입력 감지 (Input Control)
+const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false };
+
+let audioUnlocked = false;
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    Object.values(sounds).forEach(snd => {
+        const v = snd.volume;
+        snd.volume = 0;
+        snd.play().then(() => {
+            snd.pause();
+            snd.currentTime = 0;
+            snd.volume = v;
+        }).catch(() => {});
+    });
+    // 언락 후 BGM 시작
+    bgmPlayer.play('BGM1');
 }
 
-function resolvePlatform(p, plat) {
-  const overlapX = Math.min(p.x + p.w, plat.x + plat.w) - Math.max(p.x, plat.x);
-  const overlapY = Math.min(p.y + p.h, plat.y + plat.h) - Math.max(p.y, plat.y);
-  if (overlapX <= 0 || overlapY <= 0) return false;
-
-  if (overlapY < overlapX) {
-    // vertical collision
-    if (p.y + p.h / 2 < plat.y + plat.h / 2) {
-      // landing on top
-      p.y = plat.y - p.h;
-      if (p.vy > 2) {
-        p.squish = 0.6;
-      }
-      p.vy = 0;
-      p.onGround = true;
-      p.jumps = 0;
-    } else {
-      p.y = plat.y + plat.h;
-      p.vy = 0;
+window.addEventListener('mousedown', (e) => {
+    unlockAudio();
+    if (e.button === 0) {
+        keys.mouseLeft = true;
+        keys.mouseLeftPressed = true;
     }
-  } else {
-    // horizontal
-    if (p.x + p.w / 2 < plat.x + plat.w / 2) p.x = plat.x - p.w;
-    else p.x = plat.x + plat.w;
-    p.vx = 0;
-  }
-  return true;
+    if (e.button === 2) {
+        const now = Date.now();
+        if (!player.isDashing && now - player.lastDashTime > player.dashCooldown) {
+            player.isAttacking = false;
+            player.attackTimer = 0;
+            startDash();
+        }
+    }
+});
+window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) {
+        keys.mouseLeft = false;
+        keys.mouseLeftPressed = false;
+    }
+});
+window.addEventListener('keydown', (e) => {
+    unlockAudio();
+    const key = e.key.toLowerCase();
+    if (key === 'a') keys.a = true;
+    if (key === 'd') keys.d = true;
+    if (key === 's') keys.s = true;
+    if (key === 'w') keys.w = true;
+    if (key === ' ' && !keys.spacePressed) {
+        keys.space = true;
+        keys.spacePressed = true;
+    }
+    if (key === 'e') handleEKey();
+    if (key === 'f') handleFKey();
+});
+window.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    if (key === 'a') keys.a = false;
+    if (key === 'd') keys.d = false;
+    if (key === 's') keys.s = false;
+    if (key === 'w') keys.w = false;
+    if (key === ' ') { keys.space = false; keys.spacePressed = false; }
+});
+window.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+});
+// [SECTION 4] 플레이어 객체 정의
+const player = {
+    x: 100, y: 500, width: 60, height: 60,
+    dx: 0, dy: 0,
+    speed: 7, jumpForce: 16, gravity: 0.8, friction: 0.8,
+    grounded: false, jumpCount: 0, maxJumps: 2,
+    isDescending: false, isDashing: false,
+    state: 'idle', direction: 'right',
+    isAttacking: false, attackFrame: 1, attackTimer: 0, hasAirAttacked: false,
+    jumpTimer: 0, moveTimer: 0, moveFrame: 1,
+    dashSpeed: 18, dashDuration: 120, dashCooldown: 500, lastDashTime: 0,
+    teleportCooldown: 3000, lastTeleportTime: 0,
+    isInvincible: false,      // 여기 하나만
+    invincibleTimer: 0,
+    hp: 100, maxHp: 100,
+    attackPower: 20
+};
+
+// [SECTION 5] 지형 데이터 (Map / Platforms)
+// [SECTION 5] 지형 데이터 (Map / Platforms)
+const MAP_DATA = [
+    {
+        id: 0,
+        worldWidth: 3000,
+        worldHeight: 720,
+        bgColor: '#87CEEB',
+        platforms: [
+            { x: 0,    y: 670, width: 3000, height: 50,  type: 'solid' },
+            { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall'  },
+            { x: 3000, y: 0,   width: 60,   height: 520, type: 'wall'  },
+            { x: 300,  y: 520, width: 200,  height: 20,  type: 'platform' },
+            { x: 600,  y: 400, width: 250,  height: 20,  type: 'platform' },
+            { x: 1000, y: 300, width: 200,  height: 20,  type: 'platform' },
+            { x: 1400, y: 450, width: 300,  height: 20,  type: 'platform' },
+            { x: 1800, y: 350, width: 200,  height: 20,  type: 'platform' }
+        ],
+        signs: [
+            {
+                x: 350, y: 630,
+                width: 30, height: 40,
+                interactRange: 80,
+                cast: ['STORY1'],
+                dialogue: [
+                    { speaker: '플레이어', text: '너탁경구',            speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '플레이어', text: '비행탁경구',           speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '플레이어', text: '...어떻게사람이름이',  speakerType: 'player', illustKey: 'STORY1' }
+                ]
+            },
+            {
+                x: 800, y: 630,
+                width: 30, height: 40,
+                interactRange: 80,
+                cast: ['STORY1', 'NPC1_STORY'],
+                dialogue: [
+                    { speaker: '플레이어', text: '당신은탁경구입니다.',        speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: 'NPC',      text: '정말?',                     speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                    { speaker: '플레이어', text: '탁구치는탁경구탁쳐서떨구기', speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: 'NPC',      text: '저는탁경구입니다.',           speakerType: 'npc',    illustKey: 'NPC1_STORY' }
+                ]
+            }
+        ],
+        spikes: [
+            { x: 500,  y: 650, width: 60, height: 20, damage: 10 },
+            { x: 1200, y: 650, width: 60, height: 20, damage: 10 }
+        ],
+        enemies: [
+            { type: 'enemy1', x: 900,  y: 610 },
+            { type: 'enemy1', x: 1600, y: 610 }
+        ],
+        transitions: [
+            {
+                x: 2990, y: 520,
+                width: 80, height: 150,
+                toMap: 1, spawnX: 100, spawnY: 610, direction: 'right'
+            }
+        ]
+    },
+    {
+        id: 1,
+        worldWidth: 3000,
+        worldHeight: 720,
+        bgColor: '#4a5568',
+        platforms: [
+            { x: 0,    y: 670, width: 3000, height: 50,  type: 'solid' },
+            { x: -60,  y: 0,   width: 60,   height: 520, type: 'wall'  },
+            { x: 3000, y: 0,   width: 60,   height: 720, type: 'wall'  },
+            { x: 400,  y: 500, width: 200,  height: 20,  type: 'platform' },
+            { x: 800,  y: 380, width: 250,  height: 20,  type: 'platform' },
+            { x: 1300, y: 280, width: 200,  height: 20,  type: 'platform' }
+        ],
+        signs: [],
+        spikes: [],
+        enemies: [
+            { type: 'enemy1', x: 600, y: 610 }
+        ],
+        // 맵 진입 시 자동 실행 이벤트
+        onEnter: () => {
+            dialogue.active      = true;
+            dialogue.cast        = ['STORY1', 'BOSS_STORY1'];
+            dialogue.lines       = [
+                { speaker: '???',    text: '...허',           speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '당신은...',  speakerType: 'player', illustKey: 'STORY1' },
+                { speaker: '???',    text: '독을 그만치 퍼부었는데... 수십명을 뚫고 여기까지 왔다고?',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',    text: '괴물같은 자식..',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',    text: '솔직히 당황스럽긴 하다만, 그 상태로는 아무리 너라도 날 이길 수 없을거다.',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '결국 싸우려는 겁니까.',      speakerType: 'player', illustKey: 'STORY1' },
+                { speaker: '???',    text: '그래. 긴말 할 필요는 없겠지? 알아들었으면 시작하자고.',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' }
+            ];
+            dialogue.currentLine = 0;
+            dialogue.speakerName = dialogue.lines[0].speaker;
+            dialogue.speakerType = dialogue.lines[0].speakerType;
+            dialogue.illustKey   = dialogue.lines[0].illustKey;
+            dialogue.displayText = '';
+            dialogue.charIndex   = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished  = false;
+        },
+        transitions: [
+            {
+                x: -70, y: 520,
+                width: 80, height: 150,
+                toMap: 0, spawnX: 2870, spawnY: 610, direction: 'left'
+            }
+        ]
+    }
+];
+
+let platforms = [];
+let signs     = [];
+let spikes    = [];
+let enemies   = [];
+
+function loadMap(mapIndex) {
+    const map       = MAP_DATA[mapIndex];
+    currentMapIndex = mapIndex;
+    world.width     = map.worldWidth;
+    world.height    = map.worldHeight;
+    platforms       = map.platforms;
+    signs           = map.signs;
+    spikes          = map.spikes || [];
+    enemies         = (map.enemies || []).map(e => createEnemy(e.type, e.x, e.y));
+
+    // 맵 진입 이벤트 실행
+    if (map.onEnter) map.onEnter();
 }
-
-// ── Update ────────────────────────────────────────────────────
-let jumpPressed = false;
-
+// [SECTION 6] 물리 연산 및 업데이트 (Update Logic)
+// [SECTION 6] 물리 연산 및 업데이트
 function update() {
-  tick++;
+    updateDialogue();
+    updateAfterimages();
+    if (player.isDashing) createAfterimage();
 
-  // ── Player movement ──
-  const speed = 5.2;
-  if (keys['ArrowLeft']  || keys['KeyA']) { player.vx -= speed * 0.4; player.dir = -1; }
-  if (keys['ArrowRight'] || keys['KeyD']) { player.vx += speed * 0.4; player.dir =  1; }
-
-  const jumpKey = keys['ArrowUp'] || keys['KeyW'] || keys['Space'];
-  if (jumpKey && !jumpPressed && player.jumps < player.maxJumps) {
-    player.vy = -13.5;
-    player.jumps++;
-    spawnParticles(player.x + player.w / 2, player.y + player.h, '#adf', 5);
-  }
-  jumpPressed = !!jumpKey;
-
-  player.vx *= FRICTION;
-  player.vx = Math.max(-speed, Math.min(speed, player.vx));
-  player.vy += GRAVITY;
-  if (player.vy > 20) player.vy = 20;
-
-  player.x += player.vx;
-  player.y += player.vy;
-  player.onGround = false;
-
-  // ── Platform collision ──
-  for (const plat of LEVEL.platforms) {
-    const prev = { x: player.x, y: player.y - player.vy, w: player.w, h: player.h };
-    if (rectOverlap(player, plat)) resolvePlatform(player, plat);
-  }
-
-  // ── Squish recovery ──
-  player.squish += (1 - player.squish) * 0.15;
-
-  // ── Invincibility ──
-  if (player.invincible > 0) player.invincible--;
-
-  // ── Coin collection ──
-  for (const c of LEVEL.coins) {
-    if (c.collected) continue;
-    const dx = (player.x + player.w / 2) - c.x;
-    const dy = (player.y + player.h / 2) - c.y;
-    if (Math.sqrt(dx * dx + dy * dy) < c.r + player.w / 2) {
-      c.collected = true;
-      coins++;
-      score += 100;
-      spawnParticles(c.x, c.y, C.coin, 6);
+    if (mapTransition.active) {
+        updateMapTransition();
+        draw();
+        requestAnimationFrame(update);
+        return;
     }
-  }
 
-  // ── Enemy update & collision ──
-  for (const e of LEVEL.enemies) {
-    if (!e.alive) continue;
-    e.x += e.vx * e.dir;
-    if (e.x < e.left || e.x + e.w > e.right) e.dir *= -1;
-
-    // Player stomps enemy (falling onto it)
-    if (player.vy > 0 && player.invincible === 0 &&
-        player.x + player.w > e.x + 4 && player.x < e.x + e.w - 4 &&
-        player.y + player.h > e.y && player.y + player.h < e.y + e.h * 0.6) {
-      e.alive = false;
-      player.vy = -10;
-      player.jumps = 0;
-      score += 200;
-      spawnParticles(e.x + e.w / 2, e.y + e.h / 2, C.enemy, 10);
-    } else if (player.invincible === 0 && rectOverlap(player, e)) {
-      // Player hit by enemy
-      player.invincible = 90;
-      lives--;
-      spawnParticles(player.x + player.w / 2, player.y + player.h / 2, C.playerE, 12);
-      if (lives <= 0) { state = 'dead'; showScreen('game-over-screen'); }
+    if (dialogue.active || tutorial.active) {
+        player.dx = 0;
+        draw();
+        requestAnimationFrame(update);
+        return;
     }
-  }
 
-  // ── Flag / win ──
-  const flag = LEVEL.flag;
-  if (player.x + player.w > flag.x && player.x < flag.x + flag.w &&
-      player.y + player.h > flag.y && player.y < flag.y + flag.h) {
-    score += coins * 50;
-    state = 'win';
-    showScreen('win-screen');
-  }
-
-  // ── Fall off world ──
-  if (player.y > 700) {
-    lives--;
-    if (lives <= 0) { state = 'dead'; showScreen('game-over-screen'); }
-    else spawnPlayer();
-  }
-
-  // ── Camera ──
-  const targetX = player.x - canvas.width  / 2 + player.w / 2;
-  const targetY = player.y - canvas.height / 2 + player.h / 2;
-  cam.x += (targetX - cam.x) * CAM_EASE;
-  cam.y += (targetY - cam.y) * CAM_EASE;
-  cam.x = Math.max(0, Math.min(cam.x, LEVEL.levelEnd - canvas.width));
-  cam.y = Math.max(-200, Math.min(cam.y, 200));
-
-  // ── Particles ──
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x  += p.vx; p.y  += p.vy;
-    p.vy += 0.15;
-    p.life -= p.decay;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-
-  // ── HUD ──
-  document.getElementById('score-display').textContent = String(score).padStart(6, '0');
-  document.getElementById('coin-display').textContent  = coins;
-  document.getElementById('lives-display').textContent = '♥ '.repeat(Math.max(0, lives)).trim();
-}
-
-// ── Draw ──────────────────────────────────────────────────────
-function draw() {
-  const W = canvas.width, H = canvas.height;
-  ctx.clearRect(0, 0, W, H);
-
-  // Sky gradient
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, C.sky1);
-  sky.addColorStop(1, C.sky2);
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
-
-  // Stars (parallax)
-  ctx.save();
-  ctx.translate(-cam.x * 0.15, -cam.y * 0.05);
-  for (const s of stars) {
-    ctx.globalAlpha = 0.6 + Math.sin(tick * 0.03 + s.x) * 0.3;
-    ctx.fillStyle = C.star;
-    ctx.beginPath();
-    ctx.arc(s.x % W + (s.x / W | 0) * W, s.y, s.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
-
-  ctx.save();
-  ctx.translate(-cam.x, -cam.y + (H - 560)); // world-to-screen
-
-  // ── Flag ──
-  const flag = LEVEL.flag;
-  // pole
-  ctx.fillStyle = C.flagP;
-  ctx.fillRect(flag.x, flag.y, flag.w, flag.h);
-  // flag cloth animation
-  ctx.fillStyle = C.flag;
-  for (let i = 0; i < 4; i++) {
-    const fy = flag.y + i * 30;
-    const wave = Math.sin(tick * 0.08 + i * 0.8) * 8;
-    ctx.beginPath();
-    ctx.moveTo(flag.x + flag.w, fy);
-    ctx.lineTo(flag.x + flag.w + 50 + wave, fy + 15);
-    ctx.lineTo(flag.x + flag.w, fy + 30);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('GOAL', flag.x - 8, flag.y - 12);
-
-  // ── Platforms ──
-  for (const plat of LEVEL.platforms) {
-    const isGround = plat.type === 'ground';
-    const topColor  = isGround ? C.groundT : C.stoneT;
-    const bodyColor = isGround ? C.ground  : C.stone;
-
-    // body
-    ctx.fillStyle = bodyColor;
-    ctx.fillRect(plat.x, plat.y + 6, plat.w, plat.h - 6);
-
-    // top strip
-    ctx.fillStyle = topColor;
-    ctx.fillRect(plat.x, plat.y, plat.w, 6);
-
-    // pixel detail: small dark lines
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    for (let bx = plat.x; bx < plat.x + plat.w; bx += 20) {
-      ctx.fillRect(bx, plat.y + 6, 2, plat.h - 6);
+    // 6-1: 공격 처리
+    if (keys.mouseLeft && !player.isDashing) {
+        if (player.grounded) {
+            player.isAttacking = true;
+            player.dx *= 0.3;
+            if (player.attackTimer <= 0) {
+                player.attackFrame = (player.attackFrame === 1) ? 2 : 1;
+                player.attackTimer = 10;
+                playSound(player.attackFrame === 1 ? 'ATTACK1' : 'ATTACK2');
+                checkPlayerAttackHit();
+            }
+        } else if (!player.hasAirAttacked && keys.mouseLeftPressed) {
+            player.isAttacking    = true;
+            player.hasAirAttacked = true;
+            if (player.jumpTimer > 6) player.dy = -9;
+            player.dx         *= 0.2;
+            player.attackFrame  = 2;  // 1 → 2: 발동 즉시 판정 프레임으로
+            player.attackTimer  = 15;
+            keys.mouseLeftPressed = false;
+            playSound('ATTACK1');
+            checkPlayerAttackHit();
+        }
     }
-  }
 
-  // ── Coins ──
-  for (const c of LEVEL.coins) {
-    if (c.collected) continue;
-    const bob = Math.sin(tick * 0.07 + c.x * 0.05) * 3;
-    // glow
-    ctx.shadowColor = C.coin;
-    ctx.shadowBlur  = 8;
-    ctx.fillStyle   = C.coin;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y + bob, c.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // shine
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath();
-    ctx.arc(c.x - 2, c.y + bob - 2, c.r * 0.35, 0, Math.PI * 2);
-    ctx.fill();
-  }
+    if (player.attackTimer > 0) {
+        player.attackTimer--;
+        if (!player.isDashing) player.dx *= 0.5;
+    } else {
+        player.isAttacking = false;
+    }
 
-  // ── Enemies ──
-  for (const e of LEVEL.enemies) {
-    if (!e.alive) continue;
-    // body
-    ctx.fillStyle = C.enemy;
-    ctx.fillRect(e.x, e.y, e.w, e.h);
-    // darker bottom
-    ctx.fillStyle = C.enemyD;
-    ctx.fillRect(e.x, e.y + e.h * 0.6, e.w, e.h * 0.4);
-    // eyes
-    const eyeDir = e.dir;
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(e.x + (eyeDir > 0 ? e.w * 0.55 : e.w * 0.1), e.y + 6, 8, 8);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(e.x + (eyeDir > 0 ? e.w * 0.65 : e.w * 0.15), e.y + 8, 4, 4);
-    // angry brow
-    ctx.fillStyle = '#8a0020';
-    ctx.fillRect(e.x + (eyeDir > 0 ? e.w * 0.5 : e.w * 0.05), e.y + 2, 12, 3);
-  }
+    // 6-2: 수평 이동
+    if (player.isDashing) {
+        const dashDir = (player.direction === 'right' ? 1 : -1);
+        player.dx = dashDir * player.dashSpeed;
+    } else {
+        if (keys.a) {
+            player.dx = player.isAttacking ? -player.speed * 0.5 : -player.speed;
+            player.direction = 'left';
+        } else if (keys.d) {
+            player.dx = player.isAttacking ? player.speed * 0.5 : player.speed;
+            player.direction = 'right';
+        } else {
+            player.dx *= player.friction;
+            if (Math.abs(player.dx) < 0.5) player.dx = 0;
+        }
+    }
 
-  // ── Player ──
-  const alpha = player.invincible > 0 ? (Math.floor(tick / 5) % 2 === 0 ? 0.3 : 1) : 1;
-  ctx.globalAlpha = alpha;
+    // 6-3: 애니메이션 상태
+    if (player.isAttacking) {
+        player.state = player.grounded
+            ? `attack${player.attackFrame}`
+            : `jump_attack${(player.attackTimer > 7) ? 1 : 2}`;
+    } else if (player.isDashing) {
+        player.state = 'walk';
+    } else if (!player.grounded) {
+        player.state = (player.dy < 0) ? 'jump1' : 'jump2';
+    } else {
+        player.state = (keys.a || keys.d) ? 'walk' : 'idle';
+    }
 
-  const px = player.x + player.w / 2;
-  const py = player.y + player.h;
-  const sh = player.h * player.squish;
-  const sw = player.w * (2 - player.squish);
+    // 6-4: 수직 이동 및 중력
+    if (!player.isDashing) {
+        if (keys.space && player.jumpCount < player.maxJumps) {
+            if (keys.s && player.grounded) {
+                const onSolid = platforms.some(plat =>
+                    (plat.type || 'platform') === 'solid' &&
+                    player.x + player.width > plat.x &&
+                    player.x < plat.x + plat.width &&
+                    Math.abs((player.y + player.height) - plat.y) <= 12
+                );
+                if (!onSolid) {
+                    player.isDescending = true;
+                    player.grounded     = false;
+                    player.y           += 10;
+                }
+            } else {
+                player.dy = -player.jumpForce;
+                player.jumpCount++;
+                player.grounded       = false;
+                player.jumpTimer      = 0;
+                keys.mouseLeftPressed = false;
+                playSound('JUMP');
+            }
+            keys.space = false;
+        }
+        if (!player.grounded) player.jumpTimer++;
+        const gravityForce = (player.isAttacking && player.dy >= 0) ? player.gravity * 0.4 : player.gravity;
+        player.dy += gravityForce;
+        if (player.dy > 20) player.dy = 20;
+    } else {
+        player.dy      = 0;
+        player.jumpTimer = 0;
+    }
 
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.scale(player.dir, 1);
+    player.x += player.dx;
+    player.y += player.dy;
 
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath();
-  ctx.ellipse(0, 4, sw / 2, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
+    // 6-5: 지형 충돌
+    player.grounded = false;
+    platforms.forEach(plat => {
+        const type = plat.type || 'platform';
+        if (type === 'wall') {
+            if (player.x + player.width  > plat.x &&
+                player.x                 < plat.x + plat.width &&
+                player.y + player.height > plat.y &&
+                player.y                 < plat.y + plat.height) {
+                if (player.dx > 0) player.x = plat.x - player.width;
+                else if (player.dx < 0) player.x = plat.x + plat.width;
+                player.dx = 0;
+            }
+        } else if (type === 'solid') {
+            if (player.x + player.width  > plat.x &&
+                player.x                 < plat.x + plat.width &&
+                player.y + player.height >= plat.y &&
+                player.y + player.height <= plat.y + 20 &&
+                player.dy >= 0) {
+                player.y        = plat.y - player.height;
+                player.dy       = 0;
+                player.grounded = true;
+                player.jumpCount = 0;
+                player.jumpTimer = 0;
+                player.hasAirAttacked = false;
+                player.isDescending   = false;
+            }
+        } else {
+            if (player.x + player.width  > plat.x &&
+                player.x                 < plat.x + plat.width &&
+                player.y + player.height >= plat.y &&
+                player.y + player.height <= plat.y + 20 &&
+                player.dy >= 0) {
+                if (!player.isDescending) {
+                    player.y        = plat.y - player.height;
+                    player.dy       = 0;
+                    player.grounded = true;
+                    player.jumpCount = 0;
+                    player.jumpTimer = 0;
+                    player.hasAirAttacked = false;
+                }
+            }
+        }
+    });
+    if (player.dy > 5) player.isDescending = false;
 
-  ctx.translate(0, -sh);
+    // 6-6: 가시 충돌
+    checkSpikes();
 
-  // Body
-  ctx.fillStyle = C.player;
-  ctx.fillRect(-sw / 2, 0, sw, sh);
+    // 6-7: 무적 시간 업데이트
+    if (player.isInvincible && !player.isDashing) {
+        player.invincibleTimer--;
+        if (player.invincibleTimer <= 0) {
+            player.isInvincible    = false;
+            player.invincibleTimer = 0;
+        }
+    }
 
-  // Hat
-  ctx.fillStyle = '#c0392b';
-  ctx.fillRect(-sw / 2, -8, sw, 8);
-  ctx.fillRect(-sw / 2 - 3, -2, sw + 6, 4);
+    // 6-8: 적 업데이트
+    updateEnemies();
 
-  // Eyes
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(sw * 0.05, sh * 0.15, 8, 8);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(sw * 0.15, sh * 0.2, 4, 4);
+    // 6-9: 맵 전환 트리거 체크
+    checkMapTransitions();
 
-  // Smile
-  ctx.fillStyle = '#000';
-  ctx.fillRect(sw * 0.05, sh * 0.55, 10, 3);
-  ctx.fillRect(sw * 0.15, sh * 0.58, 3, 5);
+    // 6-10: 카메라 및 경계
+    if (player.x < 0) player.x = 0;
+    if (player.x + player.width > world.width) player.x = world.width - player.width;
+    const logicalW = canvas.width / SCALE;
+    camera.x = player.x - logicalW / 2 + player.width / 2;
+    if (camera.x < 0) camera.x = 0;
+    if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
 
-  // Shoes
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-sw / 2, sh - 6, sw / 2 + 2, 6);
-  ctx.fillRect(2, sh - 6, sw / 2, 6);
-
-  ctx.restore();
-  ctx.globalAlpha = 1;
-
-  // ── Particles ──
-  for (const p of particles) {
-    ctx.globalAlpha = p.life;
-    ctx.fillStyle   = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-
-  ctx.restore(); // end world transform
-}
-
-// ── Game Loop ─────────────────────────────────────────────────
-function loop() {
-  requestAnimationFrame(loop);
-  if (state === 'playing') {
-    update();
+    projectile.update();
     draw();
-  }
+    requestAnimationFrame(update);
 }
 
-// ── Screen helpers ───────────────────────────────────────────
-function hideAllScreens() {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+function checkPlayerAttackHit() {
+    // 지상 공격: attackFrame 2일 때만 판정
+    if (player.grounded && player.attackFrame !== 2) return;
+
+    const range  = 70;
+    const atkDir = player.direction === 'right' ? 1 : -1;
+    const atkX   = player.x + player.width / 2 + atkDir * range / 2;
+    const atkY   = player.y + player.height / 2;
+
+    enemies.forEach(e => {
+        if (e.isDead || e.isInvincible) return;
+        const ex = e.x + e.width  / 2;
+        const ey = e.y + e.height / 2;
+        if (Math.abs(atkX - ex) < range && Math.abs(atkY - ey) < e.height) {
+            e.takeDamage(player.attackPower);
+        }
+    });
 }
 
-function showScreen(id) {
-  hideAllScreens();
-  document.getElementById(id).classList.add('active');
-  if (id === 'game-over-screen') {
-    document.getElementById('final-score-text').textContent = `SCORE: ${String(score).padStart(6,'0')}`;
-  }
-  if (id === 'win-screen') {
-    document.getElementById('win-score-text').textContent = `FINAL SCORE: ${String(score).padStart(6,'0')}`;
-  }
+function checkSpikes() {
+    if (player.isInvincible) return;
+    for (const spike of spikes) {
+        if (player.x + player.width  > spike.x &&
+            player.x                 < spike.x + spike.width &&
+            player.y + player.height > spike.y &&
+            player.y                 < spike.y + spike.height) {
+            player.hp              = Math.max(player.hp - spike.damage, 0);
+            player.dy              = -player.jumpForce * 0.8;
+            player.grounded        = false;
+            player.jumpCount       = 1;
+            player.isInvincible    = true;
+            player.invincibleTimer = 90;
+            break;
+        }
+    }
+}
+// [SECTION 7] 렌더링 (Rendering)
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(SCALE, SCALE);
+    ctx.translate(-camera.x, 0);
+
+    // 7-1: 배경
+    ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+    ctx.fillRect(0, 0, world.width, world.height);
+
+    // 7-2: 플랫폼
+    platforms.forEach(plat => {
+        ctx.fillStyle = (plat.type === 'solid' || plat.type === 'wall') ? '#654321' : '#4A4A4A';
+        ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+    });
+
+    // 7-3: 가시
+    spikes.forEach(spike => {
+        const col  = 6;
+        const tipW = spike.width / col;
+        for (let i = 0; i < col; i++) {
+            const sx = spike.x + i * tipW;
+            ctx.fillStyle = '#888888';
+            ctx.beginPath();
+            ctx.moveTo(sx,           spike.y + spike.height);
+            ctx.lineTo(sx + tipW,    spike.y + spike.height);
+            ctx.lineTo(sx + tipW/2,  spike.y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth   = 0.5;
+            ctx.stroke();
+        }
+        ctx.fillStyle = '#666';
+        ctx.fillRect(spike.x, spike.y + spike.height * 0.7, spike.width, spike.height * 0.3);
+    });
+
+    // 7-4: 표지판
+    signs.forEach(sign => {
+        ctx.fillStyle   = '#8B5E3C';
+        ctx.fillRect(sign.x + sign.width / 2 - 4, sign.y + sign.height * 0.5, 8, sign.height * 0.5);
+        ctx.fillStyle   = '#C8A96E';
+        ctx.strokeStyle = '#5C3A1E';
+        ctx.lineWidth   = 2;
+        ctx.fillRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+        ctx.strokeRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+        ctx.fillStyle = '#3B1F0A';
+        ctx.font      = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', sign.x + sign.width / 2, sign.y + sign.height * 0.38);
+
+        const playerCX = player.x + player.width / 2;
+        const signCX   = sign.x + sign.width / 2;
+        if (Math.abs(playerCX - signCX) < sign.interactRange) {
+            ctx.fillStyle = 'white';
+            ctx.font      = 'bold 13px monospace';
+            ctx.fillText('[F]', signCX, sign.y - 10);
+        }
+    });
+    ctx.textAlign = 'left';
+
+    // 7-5: 잔상
+    if (typeof afterimages !== 'undefined') {
+        afterimages.forEach(img => {
+            drawSprite(img.imageKey, img.x, img.y, img.width, img.height, img.direction, img.opacity);
+        });
+    }
+
+    // 7-6: 플레이어 스프라이트 - 애니메이션 상태는 항상 계산, 렌더링만 깜빡임 처리
+    let currentKey = 'PLAYER_STAND';
+    if (player.isAttacking) {
+        if (player.grounded) {
+            currentKey = (player.attackFrame === 1) ? 'ATTACK1' : 'ATTACK2';
+        } else {
+            currentKey = (player.attackTimer > 7) ? 'JUMP_ATTACK1' : 'JUMP_ATTACK2';
+        }
+    } else if (!player.grounded) {
+        currentKey = (player.dy < 0) ? 'PLAYER_JUMP1' : 'PLAYER_JUMP2';
+    } else if (keys.a || keys.d) {
+        player.moveTimer++;
+        if (player.moveTimer > 8) {
+            player.moveFrame = (player.moveFrame === 1) ? 2 : 1;
+            player.moveTimer = 0;
+        }
+        currentKey   = `PLAYER_MOVE${player.moveFrame}`;
+        player.state = 'walk';
+    } else {
+        currentKey       = 'PLAYER_STAND';
+        player.moveTimer = 0;
+        player.state     = 'idle';
+    }
+    player.currentDrawingKey = currentKey;
+
+    let drawWidth  = player.width;
+    let drawHeight = player.height * 1.3;
+    if (player.isAttacking) {
+        if (currentKey === 'ATTACK2' || currentKey === 'JUMP_ATTACK2') {
+            drawWidth  *= 1.69;
+            drawHeight *= 1.32;
+        } else {
+            drawWidth  *= 1.3;
+            drawHeight *= 1.1;
+        }
+    } else if (player.state === 'walk') {
+        drawWidth *= 1.3;
+    }
+    const drawX = player.x - (drawWidth  - player.width)  / 2;
+    const drawY = (player.y + player.height) - drawHeight;
+
+    // 깜빡임은 렌더링 여부만 결정
+    const blinkVisible = !player.isInvincible ||
+                          player.isDashing     ||
+                          Math.floor(Date.now() / 80) % 2 === 0;
+    if (blinkVisible) {
+        const alpha = (player.isInvincible && !player.isDashing) ? 0.6 : 1;
+        drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, player.direction, alpha);
+    }
+
+   // 7-5-1: 순간이동 잔상
+   updateTeleportTrails();
+   drawTeleportTrails();
+
+   // 7-6: 적 렌더링  ← 추가
+   drawEnemies();
+   // 7-6-1: 순간이동 잔상
+   updateTeleportTrails();
+   drawTeleportTrails();
+    // 7-7: 투사체
+    projectile.draw();
+
+    ctx.restore();
+
+    // 7-8: UI / 대화창
+    if (typeof drawUI       === 'function') drawUI();
+    if (typeof drawDialogue === 'function') drawDialogue();
+    if (typeof drawTutorial === 'function') drawTutorial();
+
+    // 7-9: 페이드 오버레이
+    if (mapTransition.alpha > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${mapTransition.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 }
 
-function resetGame() {
-  score = 0; coins = 0; lives = 3; tick = 0;
-  cam.x = 0; cam.y = 0;
-  LEVEL.coins.forEach(c => c.collected = false);
-  LEVEL.enemies.forEach(e => {
-    e.alive = true;
-    e.x = e.left + (e.right - e.left) / 2;
-  });
-  particles.length = 0;
-  spawnPlayer();
-  state = 'playing';
-  hideAllScreens();
+function drawSprite(key, x, y, w, h, dir, alpha) {
+    const img         = sprites[key];
+    const fallbackImg = sprites['PLAYER_STAND'];
+    const targetImg   = (img && img.complete && img.naturalWidth !== 0) ? img : fallbackImg;
+    if (targetImg && targetImg.complete) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        if (dir === 'right') {
+            ctx.translate(x + w, y);
+            ctx.scale(-1, 1);
+            ctx.drawImage(targetImg, 0, 0, w, h);
+        } else {
+            ctx.drawImage(targetImg, x, y, w, h);
+        }
+        ctx.restore();
+    } else {
+        ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+        ctx.fillRect(x, y, w, h);
+    }
+}
+// [SECTION 8] 투사체 시스템 (Projectile System)
+const projectile = {
+    active:    false,
+    x:         0,
+    y:         0,
+    width:     28,
+    height:    28,
+    dx:        0,
+    speed:     22,
+    friction:  0.94,
+    minSpeed:  0.3,
+    angle:     0,
+    spinSpeed: 0.55,
+    minSpin:   0.04,
+    direction: 1,
+
+    fire(fromX, fromY, dir) {
+        this.active    = true;
+        this.x         = fromX;
+        this.y         = fromY;
+        this.direction = dir === 'left' ? -1 : 1;
+        this.dx        = this.speed * this.direction;
+        this.angle     = 0;
+        this.spinSpeed = 0.55;
+    },
+
+    reset() {
+        this.active = false;
+        this.dx     = 0;
+        this.angle  = 0;
+    },
+
+    checkCollision() {
+        for (const plat of platforms) {
+            const type = plat.type || 'platform';
+            // platform 타입은 투사체 통과
+            if (type === 'platform') continue;
+
+            const overlapX = this.x + this.width  > plat.x &&
+                             this.x                < plat.x + plat.width;
+            const overlapY = this.y + this.height  > plat.y &&
+                             this.y                < plat.y + plat.height;
+
+            if (overlapX && overlapY) {
+                const fromLeft  = (this.x + this.width)  - plat.x;
+                const fromRight = (plat.x + plat.width)  - this.x;
+                const fromTop   = (this.y + this.height)  - plat.y;
+                const fromBot   = (plat.y + plat.height)  - this.y;
+                const minX = Math.min(fromLeft, fromRight);
+                const minY = Math.min(fromTop,  fromBot);
+
+                if (minX < minY) {
+                    this.dx = 0;
+                    this.x  = fromLeft < fromRight
+                        ? plat.x - this.width
+                        : plat.x + plat.width;
+                } else {
+                    this.dx = 0;
+                    this.y  = fromTop < fromBot
+                        ? plat.y - this.height
+                        : plat.y + plat.height;
+                }
+                return;
+            }
+        }
+    },
+
+    update() {
+        if (!this.active) return;
+
+        this.dx *= this.friction;
+        this.x  += this.dx;
+
+        this.checkCollision();
+
+        const speedRatio = Math.abs(this.dx) / this.speed;
+        this.spinSpeed   = this.minSpin + (0.55 - this.minSpin) * speedRatio;
+        this.angle      += this.spinSpeed * this.direction;
+
+        if (this.x < -100 || this.x > world.width + 100) {
+            this.reset();
+        }
+    },
+
+    draw() {
+        if (!this.active) return;
+
+        const img  = sprites['PROJECTILE'];
+        const size = this.width;
+        const cx   = this.x + size / 2;
+        const cy   = this.y + size / 2;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(this.angle);
+
+        if (img && img.complete && img.naturalWidth !== 0) {
+            ctx.drawImage(img, -size / 2, -size / 2, size, size);
+        } else {
+            ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+};
+// [SECTION 9] 대시 및 순간이동 (Skills)
+function startDash() {
+    player.isDashing = true;
+    player.isInvincible = true;
+    player.lastDashTime = Date.now();
+    playSound('DASH');
+
+    const dashDir = (player.direction === 'right' ? 1 : -1);
+    player.dx = dashDir * player.dashSpeed;
+
+    setTimeout(() => {
+        player.isDashing = false;
+        player.isInvincible = false;
+    }, player.dashDuration);
 }
 
-// ── Button wiring ─────────────────────────────────────────────
-document.getElementById('start-btn').addEventListener('click', resetGame);
-document.getElementById('restart-btn').addEventListener('click', resetGame);
-document.getElementById('win-restart-btn').addEventListener('click', resetGame);
+function handleEKey() {
+    const now = Date.now();
+    if (projectile.active) {
+        // 출발~도착 사이에 잔상 스프라이트 생성
+        spawnTeleportAfterimages(
+            player.x, player.y,
+            projectile.x, projectile.y
+        );
+        player.x = projectile.x;
+        player.y = projectile.y;
+        player.dy = 0;
+        projectile.active = false;
+        playSound('TELEPORT');
+    } else if (now - player.lastTeleportTime > player.teleportCooldown) {
+        projectile.fire(player.x, player.y, player.direction);
+        player.lastTeleportTime = now;
+        playSound('TELEPORT');
+    }
+}
+// [SECTION 10] 잔상 시스템 (Afterimages)
+const afterimages = [];
 
-// ── Kick off ──────────────────────────────────────────────────
-loop();
+function createAfterimage() {
+    // 현재 플레이어가 출력 중인 크기(보정값 포함)를 그대로 잔상으로 남김
+    let drawWidth = player.width;
+    let drawHeight = player.height * 1.3;
+
+    // 대시 중에는 보통 walk 모션이므로 가로 1.2배 적용
+    if (player.state === 'walk') drawWidth *= 1.2;
+
+    afterimages.push({
+        x: player.x - (drawWidth - player.width) / 2,
+        y: (player.y + player.height) - drawHeight,
+        width: drawWidth,
+        height: drawHeight,
+        opacity: 0.5,
+        direction: player.direction,
+        // 현재 렌더링 중인 이미지 키(PLAYER_MOVE1 등)를 저장
+        imageKey: player.currentDrawingKey || 'PLAYER_MOVE1' 
+    });
+}
+
+function updateAfterimages() {
+    for (let i = afterimages.length - 1; i >= 0; i--) {
+        afterimages[i].opacity -= 0.05; // 잔상 사라지는 속도
+        if (afterimages[i].opacity <= 0) {
+            afterimages.splice(i, 1);
+        }
+    }
+}
+// [SECTION 11] 대화 시스템 (Dialogue System)
+const DIALOGUE_FONT = '"S-Core Dream", "Malgun Gothic", sans-serif';
+
+const dialogue = {
+    active: false,
+    lines: [],
+    currentLine: 0,
+    displayText: '',
+    charIndex: 0,
+    typingSpeed: 2,
+    typingTimer: 0,
+    isFinished: false,
+    speakerName: '',
+    speakerType: 'player',
+    illustKey: 'STORY1',
+    cast: []
+};
+
+function handleFKey() {
+    if (dialogue.active) {
+        if (!dialogue.isFinished) {
+            dialogue.displayText = dialogue.lines[dialogue.currentLine].text;
+            dialogue.charIndex = dialogue.displayText.length;
+            dialogue.isFinished = true;
+        } else {
+            dialogue.currentLine++;
+            if (dialogue.currentLine >= dialogue.lines.length) {
+                dialogue.active = false;
+            } else {
+                const line = dialogue.lines[dialogue.currentLine];
+                dialogue.speakerName = line.speaker || '';
+                dialogue.speakerType = line.speakerType || 'player';
+                dialogue.illustKey   = line.illustKey || 'STORY1';
+                dialogue.displayText = '';
+                dialogue.charIndex   = 0;
+                dialogue.isFinished  = false;
+            }
+        }
+        return;
+    }
+
+    const playerCX     = player.x + player.width / 2;
+    const playerBottom = player.y + player.height;
+
+    for (const sign of signs) {
+        const signCX     = sign.x + sign.width / 2;
+        const signBottom = sign.y + sign.height;
+        const inRangeX   = Math.abs(playerCX - signCX) < sign.interactRange;
+        const inRangeY   = playerBottom >= sign.y && playerBottom <= signBottom + 120;
+
+        if (inRangeX && inRangeY) {
+            const firstLine      = sign.dialogue[0];
+            dialogue.active      = true;
+            dialogue.lines       = sign.dialogue;
+            dialogue.cast        = sign.cast || ['STORY1'];
+            dialogue.currentLine = 0;
+            dialogue.speakerName = firstLine.speaker || '';
+            dialogue.speakerType = firstLine.speakerType || 'player';
+            dialogue.illustKey   = firstLine.illustKey || 'STORY1';
+            dialogue.displayText = '';
+            dialogue.charIndex   = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished  = false;
+            break;
+        }
+    }
+}
+
+function updateDialogue() {
+    if (!dialogue.active || dialogue.isFinished) return;
+    dialogue.typingTimer++;
+    if (dialogue.typingTimer >= dialogue.typingSpeed) {
+        dialogue.typingTimer = 0;
+        const fullText = dialogue.lines[dialogue.currentLine].text;
+        if (dialogue.charIndex < fullText.length) {
+            dialogue.displayText += fullText[dialogue.charIndex];
+            dialogue.charIndex++;
+        }
+        if (dialogue.charIndex >= fullText.length) dialogue.isFinished = true;
+    }
+}
+
+function drawDialogue() {
+    if (!dialogue.active) return;
+
+    const boxH = 300;
+    const boxY = canvas.height - boxH;
+    const boxW = canvas.width;
+
+    const illustH  = 1080;
+    const illustW  = 585;
+    const dimAlpha = 0.35;
+    const isSolo   = dialogue.cast.length === 1;
+    const isPlayer = dialogue.speakerType === 'player';
+
+    // --- 왼쪽 스탠딩 ---
+    const leftIllust = sprites['STORY1'];
+    const leftAlpha  = isSolo ? 1 : (isPlayer ? 1 : dimAlpha);
+    const leftX = 60;
+    const leftY = canvas.height - illustH;
+
+    if (leftIllust && leftIllust.complete && leftIllust.naturalWidth !== 0) {
+        ctx.save();
+        ctx.globalAlpha = leftAlpha;
+        ctx.drawImage(leftIllust, leftX, leftY, illustW, illustH);
+        ctx.restore();
+    } else {
+        ctx.save();
+        ctx.globalAlpha = leftAlpha;
+        ctx.fillStyle = 'rgba(80, 60, 120, 0.5)';
+        ctx.fillRect(leftX, leftY, illustW, illustH);
+        ctx.restore();
+    }
+
+    // --- 오른쪽 스탠딩 (2인 대화일 때만) ---
+    if (!isSolo) {
+        const rightIllust = sprites[dialogue.cast[1]];
+        const rightAlpha  = isPlayer ? dimAlpha : 1;
+        const rightX = canvas.width - illustW - 60;
+        const rightY = canvas.height - illustH;
+
+        if (rightIllust && rightIllust.complete && rightIllust.naturalWidth !== 0) {
+            ctx.save();
+            ctx.globalAlpha = rightAlpha;
+            ctx.translate(rightX + illustW, rightY);
+            ctx.scale(-1, 1);
+            ctx.drawImage(rightIllust, 0, 0, illustW, illustH);
+            ctx.restore();
+        } else {
+            ctx.save();
+            ctx.globalAlpha = rightAlpha;
+            ctx.fillStyle = 'rgba(60, 80, 120, 0.5)';
+            ctx.fillRect(rightX, rightY, illustW, illustH);
+            ctx.restore();
+        }
+    }
+
+    // --- 대화창 배경 ---
+    ctx.fillStyle = 'rgba(8, 8, 18, 0.92)';
+    ctx.fillRect(0, boxY, boxW, boxH);
+
+    ctx.strokeStyle = 'rgba(160, 130, 255, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, boxY);
+    ctx.lineTo(boxW, boxY);
+    ctx.stroke();
+
+    // --- 화자 이름 박스 ---
+    if (dialogue.speakerName) {
+        const nameBoxPadX = 24;
+        const nameBoxPadY = 12;
+        const nameBoxY    = boxY - 54;
+        ctx.font = `bold 30px ${DIALOGUE_FONT}`;
+        const nameW = ctx.measureText(dialogue.speakerName).width + nameBoxPadX * 2;
+
+        const nameBoxX = (isSolo || isPlayer)
+            ? 90
+            : canvas.width - 90 - nameW;
+
+        ctx.fillStyle = 'rgba(8, 8, 18, 0.95)';
+        ctx.strokeStyle = 'rgba(160, 130, 255, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(nameBoxX, nameBoxY, nameW, 51, [9, 9, 0, 0]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(210, 190, 255, 1)';
+        ctx.textAlign = 'left';
+        ctx.fillText(dialogue.speakerName, nameBoxX + nameBoxPadX, nameBoxY + nameBoxPadY + 20);
+        ctx.textAlign = 'left';
+    }
+
+    // --- 대사 텍스트 ---
+    // 스탠딩 일러스트와 무관하게 고정 여백으로 시작, 충분히 넓은 영역 확보
+    const textMarginL = 300;   // 왼쪽 여백 (스탠딩 하단이 좁아도 텍스트는 여기서 시작)
+    const textMarginR = isSolo ? 200 : 680;  // 오른쪽 여백 (2인 대화 시 오른쪽 스탠딩 회피)
+    const textX    = textMarginL;
+    const textMaxW = canvas.width - textMarginL - textMarginR;
+    const textY    = boxY + 80;
+
+    ctx.fillStyle = 'rgba(235, 230, 245, 1)';
+    ctx.font = `42px ${DIALOGUE_FONT}`;
+    wrapText(ctx, dialogue.displayText, textX, textY, textMaxW, 64);
+
+    // --- 진행 표시 ▼ ---
+    if (dialogue.isFinished) {
+        const blink = Math.floor(Date.now() / 500) % 2 === 0;
+        if (blink) {
+            ctx.fillStyle = 'rgba(200, 175, 255, 0.9)';
+            ctx.font = '19px monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText('▼', boxW - 45, canvas.height - 30);
+            ctx.textAlign = 'left';
+        }
+    }
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = text.split('');
+    let line = '';
+    let currentY = y;
+    for (const char of words) {
+        const test = line + char;
+        if (ctx.measureText(test).width > maxWidth) {
+            ctx.fillText(line, x, currentY);
+            line = char;
+            currentY += lineHeight;
+        } else {
+            line = test;
+        }
+    }
+    ctx.fillText(line, x, currentY);
+}
+
+// [SECTION 12] 맵 전환 시스템 (Map Transition)
+// [SECTION 12] 맵 전환 시스템 (Map Transition)
+const mapTransition = {
+    active: false,
+    alpha:  0,
+    phase:  'none',
+    speed:  0.06,
+    toMap:  0,
+    spawnX: 100,
+    spawnY: 500
+};
+
+function checkMapTransitions() {
+    if (mapTransition.active) return;
+
+    const map = MAP_DATA[currentMapIndex];
+    if (!map.transitions) return;
+
+    for (const tr of map.transitions) {
+        if (
+            player.x + player.width  > tr.x &&
+            player.x                 < tr.x + tr.width &&
+            player.y + player.height > tr.y &&
+            player.y                 < tr.y + tr.height
+        ) {
+            mapTransition.active = true;
+            mapTransition.phase  = 'fadeOut';
+            mapTransition.alpha  = 0;
+            mapTransition.toMap  = tr.toMap;
+            mapTransition.spawnX = tr.spawnX;
+            mapTransition.spawnY = tr.spawnY;
+            break;
+        }
+    }
+}
+
+function updateMapTransition() {
+    if (!mapTransition.active) return;
+
+    if (mapTransition.phase === 'fadeOut') {
+        mapTransition.alpha += mapTransition.speed;
+        if (mapTransition.alpha >= 1) {
+            mapTransition.alpha = 1;
+
+            // 투사체 초기화 및 쿨타임 리셋
+            projectile.reset();
+            player.lastTeleportTime = 0;
+
+            loadMap(mapTransition.toMap);
+            player.x  = mapTransition.spawnX;
+            player.y  = mapTransition.spawnY;
+            player.dx = 0;
+            player.dy = 0;
+
+            const logicalW = canvas.width / SCALE;
+            camera.x = player.x - logicalW / 2 + player.width / 2;
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+
+            mapTransition.phase = 'fadeIn';
+        }
+    } else if (mapTransition.phase === 'fadeIn') {
+        mapTransition.alpha -= mapTransition.speed;
+        if (mapTransition.alpha <= 0) {
+            mapTransition.alpha  = 0;
+            mapTransition.phase  = 'none';
+            mapTransition.active = false;
+        }
+    }
+}
+
+// [SECTION 13] UI (HUD)
+function drawUI() {
+    const barX    = 40;
+    const barY    = 50;
+    const barW    = 570;
+    const barH    = 45;
+    const radius  = 6;
+    const hpRatio = Math.max(player.hp, 0) / player.maxHp;
+
+    // HP 라벨 (검은 테두리)
+    ctx.font = `bold 30px ${DIALOGUE_FONT}`;
+    ctx.textAlign = 'left';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
+    ctx.lineWidth = 6;       // 4 → 6
+    ctx.lineJoin = 'round';
+    ctx.strokeText('HP', barX, barY + barH - 9);
+    ctx.fillStyle = 'rgba(220, 80, 80, 1)';
+    ctx.fillText('HP', barX, barY + barH - 9);
+
+    const labelW = ctx.measureText('HP').width + 18;
+    const fillX  = barX + labelW;
+    const fillW  = barW - labelW;
+
+    // 바 검은 테두리
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    roundRect(ctx, fillX - 4, barY - 4, fillW + 8, barH + 8, radius + 2);  // 2→4, 4→8
+    ctx.fill();
+
+    // 바 배경
+    ctx.fillStyle = 'rgba(80, 15, 15, 0.9)';
+    roundRect(ctx, fillX, barY, fillW, barH, radius);
+    ctx.fill();
+
+    // 체력 바
+    if (hpRatio > 0) {
+        const currentW = (fillW - 6) * hpRatio;
+        const grad = ctx.createLinearGradient(fillX, barY, fillX, barY + barH);
+        grad.addColorStop(0,   'rgba(230, 80,  60, 1)');
+        grad.addColorStop(0.5, 'rgba(200, 40,  30, 1)');
+        grad.addColorStop(1,   'rgba(160, 20,  20, 1)');
+        ctx.fillStyle = grad;
+        roundRect(ctx, fillX + 3, barY + 3, currentW, barH - 6, radius - 1);
+        ctx.fill();
+
+        // 광택
+        ctx.fillStyle = 'rgba(255, 150, 130, 0.25)';
+        roundRect(ctx, fillX + 3, barY + 3, currentW, (barH - 6) * 0.4, radius - 1);
+        ctx.fill();
+    }
+
+    // 바 안쪽 테두리
+    ctx.strokeStyle = 'rgba(160, 40, 40, 0.9)';
+    ctx.lineWidth = 2;
+    roundRect(ctx, fillX, barY, fillW, barH, radius);
+    ctx.stroke();
+
+    // HP 수치 텍스트 (검은 테두리)
+    const hpText = `${Math.max(player.hp, 0)} / ${player.maxHp}`;
+    ctx.font = `bold 22px ${DIALOGUE_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.lineWidth = 4;       // 3 → 4
+    ctx.lineJoin = 'round';
+    ctx.strokeText(hpText, fillX + fillW / 2, barY + barH - 12);
+    ctx.fillStyle = 'rgba(255, 220, 220, 0.95)';
+    ctx.fillText(hpText, fillX + fillW / 2, barY + barH - 12);
+    ctx.textAlign = 'left';
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+// [SECTION 15] 순간이동 잔상 (Teleport Afterimages)
+const teleportTrails = [];
+
+function spawnTeleportAfterimages(fromX, fromY, toX, toY) {
+    const dx    = toX - fromX;
+    const dy    = toY - fromY;
+    const dist  = Math.sqrt(dx * dx + dy * dy);
+    const steps = Math.max(Math.floor(dist / 100), 2); // 50px 간격
+
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        teleportTrails.push({
+            x:         fromX + dx * t,
+            y:         fromY + dy * t,
+            imageKey:  player.currentDrawingKey || 'PLAYER_STAND',
+            width:     player.width,
+            height:    player.height,
+            direction: player.direction,
+            opacity:   0.6 * (1 - t * 0.3),
+            timer:     0,
+            duration:  14 + Math.floor(t * 6)
+        });
+    }
+}
+
+function updateTeleportTrails() {
+    for (let i = teleportTrails.length - 1; i >= 0; i--) {
+        teleportTrails[i].timer++;
+        teleportTrails[i].opacity *= 0.82;
+        if (teleportTrails[i].timer >= teleportTrails[i].duration) {
+            teleportTrails.splice(i, 1);
+        }
+    }
+}
+
+function drawTeleportTrails() {
+    const logicalW = canvas.width  / SCALE;
+    const logicalH = canvas.height / SCALE;
+
+    teleportTrails.forEach(t => {
+        if (t.opacity < 0.02) return;
+
+        // 화면 밖 잔상 렌더링 스킵 (카메라 기준 논리 좌표로 판단)
+        const screenX = t.x - camera.x;
+        if (screenX + t.width  < 0 || screenX > logicalW) return;
+        if (t.y + t.height     < 0 || t.y       > logicalH) return;
+
+        const img       = sprites[t.imageKey];
+        const fallback  = sprites['PLAYER_STAND'];
+        const targetImg = (img && img.complete && img.naturalWidth !== 0) ? img : fallback;
+        if (!targetImg) return;
+
+        const drawWidth  = t.width;
+        const drawHeight = t.height * 1.3;
+        const drawX      = t.x - (drawWidth - t.width) / 2;
+        const drawY      = (t.y + t.height) - drawHeight;
+
+        ctx.save();
+        ctx.globalAlpha = t.opacity;
+        ctx.filter      = 'hue-rotate(180deg) brightness(1.8)';
+
+        if (t.direction === 'right') {
+            ctx.translate(drawX + drawWidth, drawY);
+            ctx.scale(-1, 1);
+            ctx.drawImage(targetImg, 0, 0, drawWidth, drawHeight);
+        } else {
+            ctx.drawImage(targetImg, drawX, drawY, drawWidth, drawHeight);
+        }
+
+        ctx.restore();
+    });
+}
+// [SECTION 16] 적 시스템 (Enemy System)
+
+const ENEMY_TYPES = {
+    enemy1: {
+        width:        90,
+        height:       97.5,
+        hp:           80,
+        speed:        4,
+        gravity:      0.8,
+        detectRange:  300,
+        loseRange:    500,
+        attackRange:  65,
+        attackDamage: 8,
+        attackCooldown: 90,
+        imgStand:   'ENEMY1_STAND',
+        imgMove:    'ENEMY1_MOVE',
+        imgAttack1: 'ENEMY1_ATTACK1',
+        imgAttack2: 'ENEMY1_ATTACK2',
+        imgAttack3: 'ENEMY1_ATTACK3',
+    }
+};
+
+function createEnemy(type, x, y) {
+    const def = ENEMY_TYPES[type];
+    return {
+        type,
+        x,
+        y: y - def.height,
+        width:    def.width,
+        height:   def.height,
+        dx: 0, dy: 0,
+        hp:    def.hp,
+        maxHp: def.hp,
+        hpVisible: false,
+
+        speed:          def.speed,
+        gravity:        def.gravity,
+        detectRange:    def.detectRange,
+        loseRange:      def.loseRange,
+        attackRange:    def.attackRange,
+        attackDamage:   def.attackDamage,
+        attackCooldown: def.attackCooldown,
+
+        imgStand:   def.imgStand,
+        imgMove:    def.imgMove,
+        imgAttack1: def.imgAttack1,
+        imgAttack2: def.imgAttack2,
+        imgAttack3: def.imgAttack3,
+
+        direction:        'left',
+        state:            'idle',
+        attackTimer:      0,
+        attackFrame:      1,
+        prevAttackFrame:  0,
+        cooldownTimer:    0,
+        grounded:         false,
+        isDead:           false,
+        isInvincible:     false,
+        invincibleTimer:  0,
+        deadTimer:        0,
+
+        isAggro:          false,
+
+        patrolOriginX:    x,
+        patrolRange:      180,
+        patrolDir:        Math.random() < 0.5 ? 1 : -1,
+        patrolTimer:      0,
+        patrolRestTimer:  0,
+
+        attack3OffsetX:   0,
+
+        takeDamage(dmg) {
+            if (this.isInvincible || this.isDead) return;
+            this.hp              = Math.max(this.hp - dmg, 0);
+            this.hpVisible       = true;
+            this.isInvincible    = true;
+            this.invincibleTimer = 20;
+            this.isAggro         = true;
+            if (this.hp <= 0) this.isDead = true;
+        }
+    };
+}
+
+function updateEnemies() {
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+
+        if (e.isDead) {
+            e.deadTimer++;
+            if (e.deadTimer > 40) enemies.splice(i, 1);
+            continue;
+        }
+
+        if (e.isInvincible) {
+            e.invincibleTimer--;
+            if (e.invincibleTimer <= 0) e.isInvincible = false;
+        }
+
+        if (e.cooldownTimer > 0) e.cooldownTimer--;
+
+        const px = player.x + player.width  / 2;
+        const py = player.y + player.height / 2;
+        const ex = e.x + e.width  / 2;
+        const ey = e.y + e.height / 2;
+        const distX = px - ex;
+        const distY = py - ey;
+        const dist  = Math.sqrt(distX * distX + distY * distY);
+
+        if (!e.isAggro && dist < e.detectRange) {
+            e.isAggro = true;
+        } else if (e.isAggro && dist > e.loseRange) {
+            e.isAggro = false;
+        }
+
+        // 수평/수직 거리 기반 공격 가능 여부
+        const inAttackRangeX = Math.abs(distX) < e.attackRange;
+        const inAttackRangeY = Math.abs(distY) < e.height * 1.2;  // 수직 허용 범위
+        const canAttack      = inAttackRangeX && inAttackRangeY;
+
+        // 공격 처리
+        if (e.attackTimer > 0) {
+            e.attackTimer--;
+            e.state = 'attack';
+            e.dx    = 0;
+
+            e.prevAttackFrame = e.attackFrame;
+
+            if      (e.attackTimer > 19) e.attackFrame = 1;
+            else if (e.attackTimer > 16) e.attackFrame = 2;
+            else                         e.attackFrame = 3;
+
+            // 프레임 전환 시점에 사운드 재생
+            if (e.prevAttackFrame !== e.attackFrame) {
+                if (e.attackFrame === 1) playSound('ENEMY1_ATTACK1');
+                if (e.attackFrame === 2) playSound('ENEMY1_ATTACK2');
+            }
+            // attack3 진입 시 즉시 전진
+            if (e.prevAttackFrame !== 3 && e.attackFrame === 3) {
+                const slideDir   = e.direction === 'right' ? 1 : -1;
+                e.attack3OffsetX = slideDir * 20;
+            }
+
+            // attack2 구간 데미지 판정 (적의 공격)
+            if (e.attackFrame === 2 && !player.isInvincible) {
+                const inRange = Math.abs(distX) < e.attackRange &&
+                                Math.abs(distY) < e.height;
+                if (inRange) {
+                    player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                    player.isInvincible    = true;
+                    player.invincibleTimer = 60;
+                    player.dx = (distX > 0 ? -1 : 1) * 5;
+                    player.dy = -6;
+                }
+            }
+
+        } else {
+            // 공격 종료 → 오프셋 즉시 복귀
+            if (e.attack3OffsetX !== 0) e.attack3OffsetX = 0;
+
+            if (e.isAggro && canAttack && e.cooldownTimer <= 0) {
+                // 공격 시작
+                e.direction      = distX > 0 ? 'right' : 'left';
+                e.state          = 'attack';
+                e.attackTimer    = 45;
+                e.attackFrame    = 1;
+                e.prevAttackFrame = 0;
+                e.cooldownTimer  = e.attackCooldown;
+                e.dx = 0;
+            } else if (e.isAggro) {
+                e.direction = distX > 0 ? 'right' : 'left';
+
+                // 수평 공격 범위 안이면 제자리 대기 (겹침 방지 + 쿨타임 대기)
+                if (inAttackRangeX) {
+                    e.state = 'idle';
+                    e.dx    = 0;
+                } else {
+                    e.state = 'walk';
+                    e.dx    = (distX > 0 ? 1 : -1) * e.speed;
+                }
+            } else {
+                // 배회
+                if (e.patrolRestTimer > 0) {
+                    e.patrolRestTimer--;
+                    e.state = 'idle';
+                    e.dx    = 0;
+                } else {
+                    if (e.patrolTimer <= 0) {
+                        const canGoRight = (e.x + e.width / 2) < e.patrolOriginX + e.patrolRange;
+                        const canGoLeft  = (e.x + e.width / 2) > e.patrolOriginX - e.patrolRange;
+
+                        if (canGoRight && canGoLeft) {
+                            e.patrolDir = Math.random() < 0.5 ? 1 : -1;
+                        } else if (!canGoRight) {
+                            e.patrolDir = -1;
+                        } else {
+                            e.patrolDir = 1;
+                        }
+
+                        e.patrolTimer     = 60 + Math.floor(Math.random() * 80);
+                        e.patrolRestTimer = 0;
+                    }
+
+                    e.state     = 'walk';
+                    e.direction = e.patrolDir > 0 ? 'right' : 'left';
+                    e.dx        = e.patrolDir * e.speed * 0.6;
+                    e.patrolTimer--;
+
+                    if (e.patrolTimer <= 0) {
+                        e.patrolRestTimer = 40 + Math.floor(Math.random() * 60);
+                    }
+                }
+            }
+        }
+
+        e.dy += e.gravity;
+        if (e.dy > 20) e.dy = 20;
+
+        e.x += e.dx;
+        e.y += e.dy;
+
+        e.grounded = false;
+        platforms.forEach(plat => {
+            const type = plat.type || 'platform';
+            if (type === 'wall') {
+                if (e.x + e.width  > plat.x && e.x < plat.x + plat.width &&
+                    e.y + e.height > plat.y && e.y < plat.y + plat.height) {
+                    if (e.dx > 0) e.x = plat.x - e.width;
+                    else          e.x = plat.x + plat.width;
+                    e.dx = 0;
+                    e.patrolDir   = -e.patrolDir;
+                    e.patrolTimer = 0;
+                }
+            } else if (type === 'solid') {
+                if (e.x + e.width  > plat.x &&
+                    e.x            < plat.x + plat.width &&
+                    e.y + e.height >= plat.y &&
+                    e.y + e.height <= plat.y + Math.max(20, e.dy + 1) &&
+                    e.dy >= 0) {
+                    e.y        = plat.y - e.height;
+                    e.dy       = 0;
+                    e.grounded = true;
+                }
+            }
+        });
+    }
+}
+
+function drawEnemies() {
+    enemies.forEach(e => {
+        const deadAlpha = e.isDead ? Math.max(0, 1 - e.deadTimer / 40) : 1;
+        if (deadAlpha <= 0) return;
+
+        const blinkVisible = !e.isInvincible || Math.floor(Date.now() / 80) % 2 === 0;
+        if (!blinkVisible) return;
+
+        let imgKey = e.imgStand;
+        if (e.state === 'walk') {
+            imgKey = e.imgMove;
+        } else if (e.state === 'attack') {
+            if      (e.attackFrame === 1) imgKey = e.imgAttack1;
+            else if (e.attackFrame === 2) imgKey = e.imgAttack2;
+            else                          imgKey = e.imgAttack3;
+        }
+
+        const img = sprites[imgKey];
+
+        const scaleW = (e.attackFrame === 2 || e.attackFrame === 3) ? 1.25 : 1.0;
+        const scaleH = e.attackFrame === 2 ? 1.15 : 1.0;
+        const drawW  = e.width  * scaleW;
+        const drawH  = e.height * 1.4 * scaleH;
+        const drawX  = e.x + (e.attack3OffsetX || 0) - (drawW - e.width) / 2;
+        const drawY  = (e.y + e.height) - drawH;
+
+        ctx.save();
+        ctx.globalAlpha = deadAlpha;
+
+        if (img && img.complete && img.naturalWidth !== 0) {
+            if (e.direction === 'right') {
+                ctx.translate(drawX + drawW, drawY);
+                ctx.scale(-1, 1);
+                ctx.drawImage(img, 0, 0, drawW, drawH);
+            } else {
+                ctx.drawImage(img, drawX, drawY, drawW, drawH);
+            }
+        } else {
+            ctx.fillStyle = e.state === 'attack' ? '#cc3333' :
+                            e.state === 'walk'   ? '#aa4444' : '#883333';
+            ctx.fillRect(e.x, e.y, e.width, e.height);
+            ctx.fillStyle = 'white';
+            ctx.font      = '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(e.state, e.x + e.width / 2, e.y + e.height / 2);
+            ctx.textAlign = 'left';
+        }
+
+        ctx.restore();
+
+        if (e.hpVisible && !e.isDead) {
+            const barW  = e.width;
+            const barH  = 5;
+            const barX  = e.x;
+            const barY  = e.y - 12;
+            const ratio = e.hp / e.maxHp;
+
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+            ctx.fillStyle = ratio > 0.5 ? '#44cc44' :
+                            ratio > 0.25 ? '#ccaa00' : '#cc3333';
+            ctx.fillRect(barX, barY, barW * ratio, barH);
+        }
+    });
+}
+
+// [START] 게임 엔진 구동
+document.fonts.ready.then(() => {
+    loadAssets(() => {
+        loadMap(0); // 맵 1부터 시작
+        update();
+    });
+});
