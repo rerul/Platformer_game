@@ -164,7 +164,7 @@ function playSound(key) {
     snd.play().catch(() => {});
 }
 // [SECTION 3] 입력 감지 (Input Control)
-const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false };
+const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false, q: false, qPressed: false };
 
 let audioUnlocked = false;
 function unlockAudio() {
@@ -217,6 +217,7 @@ window.addEventListener('keydown', (e) => {
     }
     if (key === 'e') handleEKey();
     if (key === 'f') handleFKey();
+    if (key === 'q' && !keys.qPressed) { keys.q = true; keys.qPressed = true; handleQKey(); }
 });
 window.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
@@ -225,11 +226,11 @@ window.addEventListener('keyup', (e) => {
     if (key === 's') keys.s = false;
     if (key === 'w') keys.w = false;
     if (key === ' ') { keys.space = false; keys.spacePressed = false; }
+    if (key === 'q') { keys.q = false; keys.qPressed = false; }
 });
 window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
 });
-// [SECTION 4] 플레이어 객체 정의
 const player = {
     x: 100, y: 500, width: 60, height: 60,
     dx: 0, dy: 0,
@@ -241,11 +242,23 @@ const player = {
     jumpTimer: 0, moveTimer: 0, moveFrame: 1,
     dashSpeed: 18, dashDuration: 120, dashCooldown: 500, lastDashTime: 0,
     teleportCooldown: 3000, lastTeleportTime: 0,
-    isInvincible: false,      // 여기 하나만
+    isInvincible: false,
     invincibleTimer: 0,
     hp: 100, maxHp: 100,
     attackPower: 20,
-    airAttackOriginY: 0   // 점프공격 발동 시점 y좌표 저장
+    airAttackOriginY: 0,
+    gauge: 0, maxGauge: 100,
+    gaugePerHit: 10,
+
+    // 필살기 연출 상태
+    ultPhase: 'none',   // 'none' | 'vanish' | 'hidden' | 'camMove' | 'fire'
+    ultTimer: 0,
+    ultTargetX: 0,
+    ultTargetY: 0,
+    ultCamStartX: 0,
+    ultCamDuration: 50,
+    ultVanishDuration: 14,
+    ultHiddenDuration: 8,
 };
 
 // [SECTION 5] 지형 데이터 (Map / Platforms)
@@ -301,6 +314,10 @@ const MAP_DATA = [
             { type: 'enemy2', x: 2300, y: 430 },
             { type: 'enemy2', x: 2650, y: 300 }
         ],
+        dummies: [
+            { x: 200, y: 670 },
+            { x: 1100, y: 670 }
+        ],
         transitions: [
             {
                 x: 2990, y: 520,
@@ -327,6 +344,7 @@ const MAP_DATA = [
         enemies: [
             { type: 'enemy1', x: 600, y: 610 }
         ],
+        dummies: [],
         // 맵 진입 시 자동 실행 이벤트
         onEnter: () => {
             dialogue.active      = true;
@@ -363,6 +381,7 @@ let platforms = [];
 let signs     = [];
 let spikes    = [];
 let enemies   = [];
+let dummies   = [];
 
 function loadMap(mapIndex) {
     const map       = MAP_DATA[mapIndex];
@@ -373,6 +392,7 @@ function loadMap(mapIndex) {
     signs           = map.signs;
     spikes          = map.spikes || [];
     enemies         = (map.enemies || []).map(e => createEnemy(e.type, e.x, e.y));
+    dummies         = (map.dummies || []).map(d => createDummy(d.x, d.y));
 
     // 맵 진입 이벤트 실행
     if (map.onEnter) map.onEnter();
@@ -386,6 +406,13 @@ function update() {
 
     if (mapTransition.active) {
         updateMapTransition();
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+    // 필살기 연출 중 — 입력/물리 정지
+    if (player.ultPhase !== 'none') {
+        updateUltimatePhase();
         draw();
         requestAnimationFrame(update);
         return;
@@ -557,6 +584,7 @@ function update() {
 
     // 6-8: 적 업데이트
     updateEnemies();
+    updateDummies();
 
     // 6-9: 맵 전환 트리거 체크
     checkMapTransitions();
@@ -609,7 +637,25 @@ function checkPlayerAttackHit() {
         const inY = (atkYMax + player.height / 2) >= hitTop &&
                     (atkYMin - player.height / 2) <= hitBot;
 
-        if (inX && inY) e.takeDamage(player.attackPower);
+        if (inX && inY) {
+            e.takeDamage(player.attackPower);
+            // 게이지 충전
+            player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+        }
+    });
+
+    // 허수아비 피격 판정
+    dummies.forEach(d => {
+        if (d.hitTimer > 0) return; // 짧은 무적
+        const inX = atkXMax >= d.x && atkXMin <= d.x + d.width;
+        const inY = (atkYMax + player.height / 2) >= d.y &&
+                    (atkYMin - player.height / 2) <= d.y + d.height;
+        if (inX && inY) {
+            d.hitTimer  = 20;
+            d.hitEffect = 8;
+            // 게이지 충전 (허수아비도 동일하게 충전)
+            player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+        }
     });
 }
 function checkSpikes() {
@@ -698,7 +744,7 @@ function draw() {
         });
     }
 
-    // 7-6: 플레이어 스프라이트 - 애니메이션 상태는 항상 계산, 렌더링만 깜빡임 처리
+    // 7-6: 플레이어 스프라이트
     let currentKey = 'PLAYER_STAND';
     if (player.isAttacking) {
         if (player.grounded) {
@@ -721,6 +767,13 @@ function draw() {
         player.moveTimer = 0;
         player.state     = 'idle';
     }
+
+    // vanish/hidden/camMove 페이즈면 JUMP1 고정, fire 페이즈면 STAND
+    if (player.ultPhase === 'vanish') {
+        currentKey = 'PLAYER_JUMP1';
+    } else if (player.ultPhase === 'fire') {
+        currentKey = 'PLAYER_STAND';
+    }
     player.currentDrawingKey = currentKey;
 
     let drawWidth  = player.width;
@@ -739,24 +792,36 @@ function draw() {
     const drawX = player.x - (drawWidth  - player.width)  / 2;
     const drawY = (player.y + player.height) - drawHeight;
 
-    // 깜빡임은 렌더링 여부만 결정
-    const blinkVisible = !player.isInvincible ||
-                          player.isDashing     ||
-                          Math.floor(Date.now() / 80) % 2 === 0;
+    // 페이즈별 렌더링 제어
+    let blinkVisible;
+    if (player.ultPhase === 'vanish') {
+        // JUMP1으로 짧게 표시
+        blinkVisible = true;
+    } else if (player.ultPhase === 'hidden' || player.ultPhase === 'camMove') {
+        // 완전히 숨김
+        blinkVisible = false;
+    } else if (player.ultPhase === 'fire') {
+        // 출현 시 표시
+        blinkVisible = true;
+    } else {
+        blinkVisible = !player.isInvincible ||
+                        player.isDashing     ||
+                        Math.floor(Date.now() / 80) % 2 === 0;
+    }
     if (blinkVisible) {
-        const alpha = (player.isInvincible && !player.isDashing) ? 0.6 : 1;
+        const alpha = (player.isInvincible && !player.isDashing && player.ultPhase === 'none') ? 0.6 : 1;
         drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, player.direction, alpha);
     }
 
-   // 7-5-1: 순간이동 잔상
-   updateTeleportTrails();
-   drawTeleportTrails();
+    // 7-5-1: 순간이동 잔상
+    updateTeleportTrails();
+    drawTeleportTrails();
+    drawUltParticles(); 
 
-   // 7-6: 적 렌더링  ← 추가
-   drawEnemies();
-   // 7-6-1: 순간이동 잔상
-   updateTeleportTrails();
-   drawTeleportTrails();
+    // 7-6: 적 렌더링
+    drawEnemies();
+    drawDummies();
+    // 7-6-1: 순간이동 잔상 (중복 호출 제거)
     // 7-7: 투사체
     projectile.draw();
 
@@ -766,6 +831,7 @@ function draw() {
     if (typeof drawUI       === 'function') drawUI();
     if (typeof drawDialogue === 'function') drawDialogue();
     if (typeof drawTutorial === 'function') drawTutorial();
+    drawUltimate();
 
     // 7-9: 페이드 오버레이
     if (mapTransition.alpha > 0) {
@@ -773,7 +839,6 @@ function draw() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 }
-
 function drawSprite(key, x, y, w, h, dir, alpha) {
     const img         = sprites[key];
     const fallbackImg = sprites['PLAYER_STAND'];
@@ -1322,6 +1387,81 @@ function drawUI() {
     ctx.fillStyle = 'rgba(255, 220, 220, 0.95)';
     ctx.fillText(hpText, fillX + fillW / 2, barY + barH - 12);
     ctx.textAlign = 'left';
+
+    // ── 필살기 게이지 바 ──────────────────────────────────────────
+    const gBarY     = barY + barH + 14;
+    const gBarH     = 30;
+    const gBarW     = fillW * 0.85;          // HP바보다 약간 짧게
+    const gBarX     = fillX;
+    const gRatio    = player.gauge / player.maxGauge;
+    const gFull     = gRatio >= 1;
+
+    // 라벨
+    ctx.font = `bold 22px ${DIALOGUE_FONT}`;
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth   = 6;
+    ctx.lineJoin    = 'round';
+    ctx.strokeText('SP', barX, gBarY + gBarH - 7);
+    ctx.fillStyle = gFull ? 'rgba(140, 200, 255, 1)' : 'rgba(80, 140, 220, 1)';
+    ctx.fillText('SP', barX, gBarY + gBarH - 7);
+
+    // 바 외곽
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    roundRect(ctx, gBarX - 4, gBarY - 4, gBarW + 8, gBarH + 8, 5);
+    ctx.fill();
+
+    // 바 배경
+    ctx.fillStyle = 'rgba(10, 20, 60, 0.9)';
+    roundRect(ctx, gBarX, gBarY, gBarW, gBarH, 4);
+    ctx.fill();
+
+    // 게이지 채움
+    if (gRatio > 0) {
+        const gFillW = (gBarW - 6) * Math.min(gRatio, 1);
+        const gGrad = ctx.createLinearGradient(gBarX, gBarY, gBarX, gBarY + gBarH);
+        if (gFull) {
+            // 가득 찼을 때 밝은 시안 계열 + 반짝임
+            const pulse = 0.75 + 0.25 * Math.sin(Date.now() * 0.008);
+            gGrad.addColorStop(0,   `rgba(${Math.floor(100 + 80*pulse)}, 210, 255, 1)`);
+            gGrad.addColorStop(0.5, 'rgba(60, 180, 255, 1)');
+            gGrad.addColorStop(1,   'rgba(30, 120, 220, 1)');
+        } else {
+            gGrad.addColorStop(0,   'rgba(90, 180, 255, 1)');
+            gGrad.addColorStop(0.5, 'rgba(60, 140, 230, 1)');
+            gGrad.addColorStop(1,   'rgba(30,  90, 190, 1)');
+        }
+        ctx.fillStyle = gGrad;
+        roundRect(ctx, gBarX + 3, gBarY + 3, gFillW, gBarH - 6, 3);
+        ctx.fill();
+
+        // 광택
+        ctx.fillStyle = 'rgba(180, 230, 255, 0.22)';
+        roundRect(ctx, gBarX + 3, gBarY + 3, gFillW, (gBarH - 6) * 0.4, 3);
+        ctx.fill();
+    }
+
+    // 바 안쪽 테두리
+    ctx.strokeStyle = gFull ? 'rgba(120, 200, 255, 0.9)' : 'rgba(40, 100, 200, 0.7)';
+    ctx.lineWidth = 2;
+    roundRect(ctx, gBarX, gBarY, gBarW, gBarH, 4);
+    ctx.stroke();
+
+    // 가득 찼을 때 [Q] 힌트
+    if (gFull) {
+        const hint = '[Q] 필살기';
+        ctx.font = `bold 20px ${DIALOGUE_FONT}`;
+        const hintBlink = Math.floor(Date.now() / 500) % 2 === 0;
+        ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth   = 4;
+        ctx.lineJoin    = 'round';
+        ctx.textAlign   = 'center';
+        if (hintBlink) {
+            ctx.strokeText(hint, gBarX + gBarW / 2, gBarY + gBarH - 7);
+            ctx.fillStyle = 'rgba(220, 240, 255, 1)';
+            ctx.fillText(hint, gBarX + gBarW / 2, gBarY + gBarH - 7);
+        }
+        ctx.textAlign = 'left';
+    }
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -1410,8 +1550,101 @@ function drawTeleportTrails() {
         ctx.restore();
     });
 }
-// [SECTION 16] 적 시스템 (Enemy System)
+// [SECTION 16-A] 허수아비 시스템 (Dummy System)
+function createDummy(x, y) {
+    const width  = 44;
+    const height = 80;
+    return {
+        x: x - width / 2,
+        y: y - height,
+        width,
+        height,
+        hitTimer:  0,
+        hitEffect: 0,
+        wobble:    0,
+        wobbleDir: 1
+    };
+}
 
+function updateDummies() {
+    dummies.forEach(d => {
+        if (d.hitTimer  > 0) d.hitTimer--;
+        if (d.hitEffect > 0) {
+            d.hitEffect--;
+            d.wobble += d.wobbleDir * 0.18;
+            if (Math.abs(d.wobble) > 0.22) d.wobbleDir *= -1;
+        } else {
+            d.wobble *= 0.75;
+        }
+    });
+}
+
+function drawDummies() {
+    dummies.forEach(d => {
+        const cx = d.x + d.width / 2;
+
+        ctx.save();
+        ctx.translate(cx, d.y + d.height);
+        ctx.rotate(d.wobble);
+
+        // 몸통
+        ctx.fillStyle = '#c8a06a';
+        ctx.fillRect(-d.width / 2, -d.height, d.width, d.height * 0.7);
+
+        // 머리
+        const headR = d.width * 0.44;
+        ctx.fillStyle = '#dbb97a';
+        ctx.beginPath();
+        ctx.arc(0, -d.height + headR * 0.8, headR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 눈 (X 표시)
+        ctx.strokeStyle = '#5a3a1a';
+        ctx.lineWidth   = 2.5;
+        const ex = headR * 0.35;
+        const ey = -d.height + headR * 0.7;
+        const es = headR * 0.18;
+        ctx.beginPath();
+        ctx.moveTo(-ex - es, ey - es); ctx.lineTo(-ex + es, ey + es);
+        ctx.moveTo(-ex + es, ey - es); ctx.lineTo(-ex - es, ey + es);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ex - es, ey - es); ctx.lineTo(ex + es, ey + es);
+        ctx.moveTo(ex + es, ey - es); ctx.lineTo(ex - es, ey + es);
+        ctx.stroke();
+
+        // 가로 봉 (팔)
+        ctx.fillStyle = '#8B5E3C';
+        ctx.fillRect(-d.width * 0.78, -d.height * 0.62, d.width * 1.56, 6);
+
+        // 세로 기둥
+        ctx.fillStyle = '#7a5230';
+        ctx.fillRect(-4, -d.height * 0.3, 8, d.height * 0.35);
+
+        // 피격 이펙트
+        if (d.hitEffect > 0) {
+            ctx.globalAlpha = (d.hitEffect / 8) * 0.45;
+            ctx.fillStyle   = '#ff3333';
+            ctx.fillRect(-d.width / 2, -d.height, d.width, d.height * 0.7);
+        }
+
+        ctx.restore();
+
+        // 피격 데미지 숫자
+        if (d.hitEffect > 0) {
+            ctx.save();
+            ctx.globalAlpha = d.hitEffect / 8;
+            ctx.fillStyle   = '#ffe066';
+            ctx.font        = `bold ${14 + (8 - d.hitEffect)}px monospace`;
+            ctx.textAlign   = 'center';
+            ctx.fillText(`-${player.attackPower}`, cx, d.y - 4 - (8 - d.hitEffect) * 2);
+            ctx.textAlign   = 'left';
+            ctx.restore();
+        }
+    });
+}
+
+// [SECTION 16] 적 시스템 (Enemy System)
 const ENEMY_TYPES = {
     enemy1: {
         width:        90,
@@ -1962,6 +2195,167 @@ function drawEnemies() {
             ctx.fillRect(barX, barY, barW * ratio, barH);
         }
     });
+}
+// [SECTION 17] 필살기 시스템 (Ultimate Skill)
+const ultimate = {
+    active:   false,
+    timer:    0,
+    duration: 40,
+    alpha:    0
+};
+
+// 필살기 파티클
+const ultParticles = [];
+
+function spawnUltParticles() {
+    // 플레이어 뒤쪽(이동 반대 방향)으로 파티클 방출
+    const backDir = player.direction === 'right' ? -1 : 1;
+    const cx = player.x + player.width  / 2;
+    const cy = player.y + player.height / 2;
+
+    for (let i = 0; i < 18; i++) {
+        const spread  = (Math.random() - 0.5) * 2.2;   // 위아래 퍼짐
+        const speed   = 3.5 + Math.random() * 5;
+        const angle   = Math.atan2(spread, backDir);
+        ultParticles.push({
+            x:       cx,
+            y:       cy,
+            dx:      Math.cos(angle) * speed,
+            dy:      Math.sin(angle) * speed - Math.random() * 2, // 살짝 위로
+            life:    1.0,
+            decay:   0.045 + Math.random() * 0.03,
+            size:    3 + Math.random() * 5,
+            color:   Math.random() < 0.6 ? '#88ccff' : '#ffffff'
+        });
+    }
+}
+
+function updateUltParticles() {
+    for (let i = ultParticles.length - 1; i >= 0; i--) {
+        const p = ultParticles[i];
+        p.x    += p.dx;
+        p.y    += p.dy;
+        p.dy   += 0.18;   // 중력
+        p.dx   *= 0.88;   // 감속
+        p.life -= p.decay;
+        if (p.life <= 0) ultParticles.splice(i, 1);
+    }
+}
+
+function drawUltParticles() {
+    ultParticles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle   = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    });
+}
+
+function handleQKey() {
+    if (dialogue.active || tutorial.active) return;
+    if (player.gauge < player.maxGauge) return;
+    if (player.ultPhase !== 'none') return;
+
+    player.gauge = 0;
+
+    if (projectile.active) {
+        player.ultTargetX = projectile.x;
+        player.ultTargetY = projectile.y;
+        projectile.reset();
+    } else {
+        player.ultTargetX = player.x;
+        player.ultTargetY = player.y;
+    }
+
+    // 목적지 방향으로 바라보기
+    const diffX = player.ultTargetX - player.x;
+    if (Math.abs(diffX) > 10) {
+        player.direction = diffX > 0 ? 'right' : 'left';
+    }
+
+    player.ultCamStartX = camera.x;
+    player.ultPhase     = 'vanish';
+    player.ultTimer     = player.ultVanishDuration;
+    player.dx           = 0;
+    player.dy           = 0;
+    player.isAttacking  = false;
+}
+
+function updateUltimatePhase() {
+    player.ultTimer--;
+
+    if (player.ultPhase === 'vanish') {
+        if (player.ultTimer <= 0) {
+            player.ultPhase = 'hidden';
+            player.ultTimer = player.ultHiddenDuration;
+            // 사라지는 순간 파티클 방출
+            spawnUltParticles();
+        }
+
+    } else if (player.ultPhase === 'hidden') {
+        updateUltParticles();
+        if (player.ultTimer <= 0) {
+            player.ultPhase = 'camMove';
+            player.ultTimer = player.ultCamDuration;
+        }
+
+    } else if (player.ultPhase === 'camMove') {
+        updateUltParticles();
+        const t    = 1 - player.ultTimer / player.ultCamDuration;
+        const ease = t * t * (3 - 2 * t);
+
+        const logicalW   = canvas.width / SCALE;
+        const targetCamX = Math.max(0,
+            Math.min(player.ultTargetX - logicalW / 2 + player.width / 2,
+                     world.width - logicalW));
+        camera.x = player.ultCamStartX + (targetCamX - player.ultCamStartX) * ease;
+
+        if (player.ultTimer <= 0) {
+            player.x  = player.ultTargetX;
+            player.y  = player.ultTargetY;
+            player.dy = 0;
+
+            player.ultPhase = 'fire';
+            player.ultTimer = ultimate.duration;
+            ultimate.active = true;
+            ultimate.timer  = ultimate.duration;
+            ultimate.alpha  = 1;
+
+            const atkRange = 300;
+            const px = player.x + player.width / 2;
+            const py = player.y + player.height / 2;
+            enemies.forEach(e => {
+                if (e.isDead) return;
+                const ex = e.x + e.width  / 2;
+                const ey = e.y + e.height / 2;
+                if (Math.abs(px - ex) < atkRange && Math.abs(py - ey) < atkRange) {
+                    e.takeDamage(player.attackPower * 3);
+                }
+            });
+        }
+
+    } else if (player.ultPhase === 'fire') {
+        updateUltParticles();
+        ultimate.timer--;
+        ultimate.alpha = ultimate.timer / ultimate.duration;
+        if (ultimate.timer <= 0) {
+            ultimate.active = false;
+            player.ultPhase = 'none';
+        }
+    }
+}
+
+function drawUltimate() {
+    if (!ultimate.active) return;
+    const progress = 1 - ultimate.timer / ultimate.duration;
+    ctx.save();
+    ctx.globalAlpha = ultimate.alpha * (1 - progress * 0.5);
+    ctx.fillStyle   = '#66aaff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
 }
 
 
