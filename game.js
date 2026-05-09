@@ -326,11 +326,11 @@ const MAP_DATA = [
             dialogue.lines       = [
                 { speaker: '???',    text: '...허',           speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
                 { speaker: '플레이어', text: '당신은...',  speakerType: 'player', illustKey: 'STORY1' },
-                { speaker: '???',    text: '독을 그만치 퍼부었는데... 수십명을 뚫고 여기까지 왔다고?',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '???',    text: '괴물같은 자식..',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '???',    text: '솔직히 당황스럽긴 하다만, 그 상태로는 아무리 너라도 날 이길 수 없을거다.',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '플레이어', text: '결국 싸우려는 겁니까.',      speakerType: 'player', illustKey: 'STORY1' },
-                { speaker: '???',    text: '그래. 긴말 할 필요는 없겠지? 알아들었으면 시작하자고.',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' }
+                { speaker: '???',    text: '당황하는대사',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',    text: '탁경구',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',    text: '탁경구탁',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '결국.',      speakerType: 'player', illustKey: 'STORY1' },
+                { speaker: '???',    text: '그래. 탁경구',      speakerType: 'npc',    illustKey: 'BOSS_STORY1' }
             ];
             dialogue.currentLine = 0;
             dialogue.speakerName = dialogue.lines[0].speaker;
