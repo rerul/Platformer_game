@@ -39,7 +39,11 @@ const ASSETS = {
     ENEMY1_ATTACK1:  './assets/images/enemy1_attack1.png',
     ENEMY1_ATTACK2:  './assets/images/enemy1_attack2.png',
     BOSS_STORY1:     './assets/images/boss_story1.png',
-    ENEMY1_ATTACK3: './assets/images/enemy1_attack3.png'
+    ENEMY1_ATTACK3: './assets/images/enemy1_attack3.png',
+    ENEMY2_STAND:      './assets/images/enemy2_stand.png',
+    ENEMY2_MOVE:      './assets/images/enemy2_move.png',
+    ENEMY2_ATTACK1:    './assets/images/enemy2_attack1.png',
+    ENEMY2_ATTACK2:    './assets/images/enemy2_attack2.png'
 };
 
 const SOUNDS = {
@@ -49,7 +53,8 @@ const SOUNDS = {
     DASH:           { src: './assets/audio/player_dash.wav',      volume: 1.0 },
     TELEPORT:       { src: './assets/audio/player_teleport.wav',  volume: 1.0 },
     ENEMY1_ATTACK1: { src: './assets/audio/enemy1_attack1.wav',   volume: 1.0 },
-    ENEMY1_ATTACK2: { src: './assets/audio/enemy1_attack2.wav',   volume: 1.0 }
+    ENEMY1_ATTACK2: { src: './assets/audio/enemy1_attack2.wav',   volume: 1.0 },
+    ENEMY2_ATTACK1: { src: './assets/audio/enemy2_attack1.wav', volume: 1.0 }
 };
 
 const BGM = {
@@ -239,7 +244,8 @@ const player = {
     isInvincible: false,      // 여기 하나만
     invincibleTimer: 0,
     hp: 100, maxHp: 100,
-    attackPower: 20
+    attackPower: 20,
+    airAttackOriginY: 0   // 점프공격 발동 시점 y좌표 저장
 };
 
 // [SECTION 5] 지형 데이터 (Map / Platforms)
@@ -291,7 +297,9 @@ const MAP_DATA = [
         ],
         enemies: [
             { type: 'enemy1', x: 900,  y: 610 },
-            { type: 'enemy1', x: 1600, y: 610 }
+            { type: 'enemy1', x: 1600, y: 610 },
+            { type: 'enemy2', x: 2300, y: 430 },
+            { type: 'enemy2', x: 2650, y: 300 }
         ],
         transitions: [
             {
@@ -402,11 +410,12 @@ function update() {
                 checkPlayerAttackHit();
             }
         } else if (!player.hasAirAttacked && keys.mouseLeftPressed) {
-            player.isAttacking    = true;
-            player.hasAirAttacked = true;
+            player.isAttacking       = true;
+            player.hasAirAttacked    = true;
+            player.airAttackOriginY  = player.y;   // 발동 시점 y 저장
             if (player.jumpTimer > 6) player.dy = -9;
             player.dx         *= 0.2;
-            player.attackFrame  = 2;  // 1 → 2: 발동 즉시 판정 프레임으로
+            player.attackFrame  = 2;
             player.attackTimer  = 15;
             keys.mouseLeftPressed = false;
             playSound('ATTACK1');
@@ -566,24 +575,43 @@ function update() {
 }
 
 function checkPlayerAttackHit() {
-    // 지상 공격: attackFrame 2일 때만 판정
     if (player.grounded && player.attackFrame !== 2) return;
 
-    const range  = 70;
-    const atkDir = player.direction === 'right' ? 1 : -1;
-    const atkX   = player.x + player.width / 2 + atkDir * range / 2;
-    const atkY   = player.y + player.height / 2;
+    const atkDir   = player.direction === 'right' ? 1 : -1;
+    const playerCX = player.x + player.width / 2;
+
+    const frontRange = 80;
+    const backRange  = 40;
+
+    const atkXMin = playerCX - (atkDir === 1 ? backRange  : frontRange);
+    const atkXMax = playerCX + (atkDir === 1 ? frontRange : backRange);
+
+    const currentCY = player.y + player.height / 2;
+    const originCY  = player.grounded ? currentCY : player.airAttackOriginY + player.height / 2;
+    const upwardBonus = player.grounded ? 0 : player.height * 0.4;
+    const atkYMin = Math.min(currentCY, originCY) - upwardBonus;
+    const atkYMax = Math.max(currentCY, originCY);
 
     enemies.forEach(e => {
         if (e.isDead || e.isInvincible) return;
-        const ex = e.x + e.width  / 2;
-        const ey = e.y + e.height / 2;
-        if (Math.abs(atkX - ex) < range && Math.abs(atkY - ey) < e.height) {
-            e.takeDamage(player.attackPower);
-        }
+
+        // 외형 기준 히트박스 (drawEnemies와 동일한 계산)
+        const scaleW   = (e.type === 'enemy1' && (e.attackFrame === 2 || e.attackFrame === 3)) ? 1.25 : 1.0;
+        const scaleH   = (e.type === 'enemy1' && e.attackFrame === 2) ? 1.15 : 1.0;
+        const hitW     = e.width  * scaleW * 1.0;
+        const hitH     = e.height * 1.4   * scaleH;
+        const hitLeft  = e.x + (e.attack3OffsetX || 0) - (hitW - e.width) / 2;
+        const hitRight = hitLeft + hitW;
+        const hitBot   = e.y + e.height;
+        const hitTop   = hitBot - hitH;
+
+        const inX = atkXMax >= hitLeft && atkXMin <= hitRight;
+        const inY = (atkYMax + player.height / 2) >= hitTop &&
+                    (atkYMin - player.height / 2) <= hitBot;
+
+        if (inX && inY) e.takeDamage(player.attackPower);
     });
 }
-
 function checkSpikes() {
     if (player.isInvincible) return;
     for (const spike of spikes) {
@@ -1401,12 +1429,32 @@ const ENEMY_TYPES = {
         imgAttack1: 'ENEMY1_ATTACK1',
         imgAttack2: 'ENEMY1_ATTACK2',
         imgAttack3: 'ENEMY1_ATTACK3',
+    },
+    enemy2: {
+        width:        50,
+        height:       65,
+        hp:           50,
+        speed:        1.2,
+        speedY:       0.6,
+        gravity:      0,
+        detectRange:  400,
+        loseRange:    600,
+        attackRange:  110,
+        attackDamage: 6,
+        attackCooldown: 120,
+        attackWindup:  25,       // attack1 유지 프레임 (예비동작)
+        attackDuration: 30,      // attack2 돌진 프레임
+        attackDashSpeed: 3.5,    // 돌진 속도
+        imgStand:   'ENEMY2_STAND',
+        imgMove: 'ENEMY2_MOVE',
+        imgAttack1: 'ENEMY2_ATTACK1',
+        imgAttack2: 'ENEMY2_ATTACK2',
     }
 };
 
 function createEnemy(type, x, y) {
     const def = ENEMY_TYPES[type];
-    return {
+    const base = {
         type,
         x,
         y: y - def.height,
@@ -1425,12 +1473,6 @@ function createEnemy(type, x, y) {
         attackDamage:   def.attackDamage,
         attackCooldown: def.attackCooldown,
 
-        imgStand:   def.imgStand,
-        imgMove:    def.imgMove,
-        imgAttack1: def.imgAttack1,
-        imgAttack2: def.imgAttack2,
-        imgAttack3: def.imgAttack3,
-
         direction:        'left',
         state:            'idle',
         attackTimer:      0,
@@ -1442,16 +1484,7 @@ function createEnemy(type, x, y) {
         isInvincible:     false,
         invincibleTimer:  0,
         deadTimer:        0,
-
         isAggro:          false,
-
-        patrolOriginX:    x,
-        patrolRange:      180,
-        patrolDir:        Math.random() < 0.5 ? 1 : -1,
-        patrolTimer:      0,
-        patrolRestTimer:  0,
-
-        attack3OffsetX:   0,
 
         takeDamage(dmg) {
             if (this.isInvincible || this.isDead) return;
@@ -1463,6 +1496,43 @@ function createEnemy(type, x, y) {
             if (this.hp <= 0) this.isDead = true;
         }
     };
+
+    if (type === 'enemy1') {
+        return Object.assign(base, {
+            imgStand:   def.imgStand,
+            imgMove:    def.imgMove,
+            imgAttack1: def.imgAttack1,
+            imgAttack2: def.imgAttack2,
+            imgAttack3: def.imgAttack3,
+            patrolOriginX:   x,
+            patrolRange:     180,
+            patrolDir:       Math.random() < 0.5 ? 1 : -1,
+            patrolTimer:     0,
+            patrolRestTimer: 0,
+            attack3OffsetX:  0,
+        });
+    }
+
+    if (type === 'enemy2') {
+        return Object.assign(base, {
+            speedY:          def.speedY,
+            attackDuration:  def.attackDuration,
+            attackWindup:    def.attackWindup,
+            attackDashSpeed: def.attackDashSpeed,
+            imgStand:   def.imgStand,
+            imgMove:    def.imgMove,
+            imgAttack1: def.imgAttack1,
+            imgAttack2: def.imgAttack2,
+            floatTimer:     0,
+            attackDirX:     0,
+            attackDirY:     0,
+            windupTimer:    0,
+            isWindup:       false,
+            hasHitPlayer:   false,
+        });
+    }
+
+    return base;
 }
 
 function updateEnemies() {
@@ -1490,142 +1560,203 @@ function updateEnemies() {
         const distY = py - ey;
         const dist  = Math.sqrt(distX * distX + distY * distY);
 
-        if (!e.isAggro && dist < e.detectRange) {
-            e.isAggro = true;
-        } else if (e.isAggro && dist > e.loseRange) {
-            e.isAggro = false;
-        }
+        if (!e.isAggro && dist < e.detectRange) e.isAggro = true;
+        else if (e.isAggro && dist > e.loseRange) e.isAggro = false;
 
-        // 수평/수직 거리 기반 공격 가능 여부
-        const inAttackRangeX = Math.abs(distX) < e.attackRange;
-        const inAttackRangeY = Math.abs(distY) < e.height * 1.2;  // 수직 허용 범위
-        const canAttack      = inAttackRangeX && inAttackRangeY;
+        // ── enemy1 ───────────────────────────────────────────────
+        if (e.type === 'enemy1') {
+            const inAttackRangeX = Math.abs(distX) < e.attackRange;
+            const inAttackRangeY = Math.abs(distY) < e.height * 1.2;
+            const canAttack      = inAttackRangeX && inAttackRangeY;
 
-        // 공격 처리
-        if (e.attackTimer > 0) {
-            e.attackTimer--;
-            e.state = 'attack';
-            e.dx    = 0;
+            if (e.attackTimer > 0) {
+                e.attackTimer--;
+                e.state = 'attack';
+                e.dx    = 0;
 
-            e.prevAttackFrame = e.attackFrame;
+                e.prevAttackFrame = e.attackFrame;
+                if      (e.attackTimer > 19) e.attackFrame = 1;
+                else if (e.attackTimer > 16) e.attackFrame = 2;
+                else                         e.attackFrame = 3;
 
-            if      (e.attackTimer > 19) e.attackFrame = 1;
-            else if (e.attackTimer > 16) e.attackFrame = 2;
-            else                         e.attackFrame = 3;
-
-            // 프레임 전환 시점에 사운드 재생
-            if (e.prevAttackFrame !== e.attackFrame) {
-                if (e.attackFrame === 1) playSound('ENEMY1_ATTACK1');
-                if (e.attackFrame === 2) playSound('ENEMY1_ATTACK2');
-            }
-            // attack3 진입 시 즉시 전진
-            if (e.prevAttackFrame !== 3 && e.attackFrame === 3) {
-                const slideDir   = e.direction === 'right' ? 1 : -1;
-                e.attack3OffsetX = slideDir * 20;
-            }
-
-            // attack2 구간 데미지 판정 (적의 공격)
-            if (e.attackFrame === 2 && !player.isInvincible) {
-                const inRange = Math.abs(distX) < e.attackRange &&
-                                Math.abs(distY) < e.height;
-                if (inRange) {
-                    player.hp              = Math.max(player.hp - e.attackDamage, 0);
-                    player.isInvincible    = true;
-                    player.invincibleTimer = 60;
-                    player.dx = (distX > 0 ? -1 : 1) * 5;
-                    player.dy = -6;
+                if (e.prevAttackFrame !== 3 && e.attackFrame === 3) {
+                    e.attack3OffsetX = (e.direction === 'right' ? 1 : -1) * 20;
                 }
-            }
 
-        } else {
-            // 공격 종료 → 오프셋 즉시 복귀
-            if (e.attack3OffsetX !== 0) e.attack3OffsetX = 0;
-
-            if (e.isAggro && canAttack && e.cooldownTimer <= 0) {
-                // 공격 시작
-                e.direction      = distX > 0 ? 'right' : 'left';
-                e.state          = 'attack';
-                e.attackTimer    = 45;
-                e.attackFrame    = 1;
-                e.prevAttackFrame = 0;
-                e.cooldownTimer  = e.attackCooldown;
-                e.dx = 0;
-            } else if (e.isAggro) {
-                e.direction = distX > 0 ? 'right' : 'left';
-
-                // 수평 공격 범위 안이면 제자리 대기 (겹침 방지 + 쿨타임 대기)
-                if (inAttackRangeX) {
-                    e.state = 'idle';
-                    e.dx    = 0;
-                } else {
-                    e.state = 'walk';
-                    e.dx    = (distX > 0 ? 1 : -1) * e.speed;
+                if (e.prevAttackFrame !== e.attackFrame) {
+                    if (e.attackFrame === 1) playSound('ENEMY1_ATTACK1');
+                    if (e.attackFrame === 2) playSound('ENEMY1_ATTACK2');
                 }
+
+                if (e.attackFrame === 2 && !player.isInvincible) {
+                    const inRange = Math.abs(distX) < e.attackRange &&
+                                    Math.abs(distY) < e.height;
+                    if (inRange) {
+                        player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                        player.isInvincible    = true;
+                        player.invincibleTimer = 60;
+                        player.dx = (distX > 0 ? -1 : 1) * 5;
+                        player.dy = -6;
+                    }
+                }
+
             } else {
-                // 배회
-                if (e.patrolRestTimer > 0) {
-                    e.patrolRestTimer--;
-                    e.state = 'idle';
-                    e.dx    = 0;
+                if (e.attack3OffsetX !== 0) e.attack3OffsetX = 0;
+
+                if (e.isAggro && canAttack && e.cooldownTimer <= 0) {
+                    e.direction      = distX > 0 ? 'right' : 'left';
+                    e.state          = 'attack';
+                    e.attackTimer    = 45;
+                    e.attackFrame    = 1;
+                    e.prevAttackFrame = 0;
+                    e.cooldownTimer  = e.attackCooldown;
+                    e.dx = 0;
+                } else if (e.isAggro) {
+                    e.direction = distX > 0 ? 'right' : 'left';
+                    if (inAttackRangeX) {
+                        e.state = 'idle';
+                        e.dx    = 0;
+                    } else {
+                        e.state = 'walk';
+                        e.dx    = (distX > 0 ? 1 : -1) * e.speed;
+                    }
                 } else {
-                    if (e.patrolTimer <= 0) {
-                        const canGoRight = (e.x + e.width / 2) < e.patrolOriginX + e.patrolRange;
-                        const canGoLeft  = (e.x + e.width / 2) > e.patrolOriginX - e.patrolRange;
-
-                        if (canGoRight && canGoLeft) {
-                            e.patrolDir = Math.random() < 0.5 ? 1 : -1;
-                        } else if (!canGoRight) {
-                            e.patrolDir = -1;
-                        } else {
-                            e.patrolDir = 1;
+                    if (e.patrolRestTimer > 0) {
+                        e.patrolRestTimer--;
+                        e.state = 'idle';
+                        e.dx    = 0;
+                    } else {
+                        if (e.patrolTimer <= 0) {
+                            const canGoRight = (e.x + e.width / 2) < e.patrolOriginX + e.patrolRange;
+                            const canGoLeft  = (e.x + e.width / 2) > e.patrolOriginX - e.patrolRange;
+                            if (canGoRight && canGoLeft) {
+                                e.patrolDir = Math.random() < 0.5 ? 1 : -1;
+                            } else if (!canGoRight) {
+                                e.patrolDir = -1;
+                            } else {
+                                e.patrolDir = 1;
+                            }
+                            e.patrolTimer     = 60 + Math.floor(Math.random() * 80);
+                            e.patrolRestTimer = 0;
                         }
-
-                        e.patrolTimer     = 60 + Math.floor(Math.random() * 80);
-                        e.patrolRestTimer = 0;
+                        e.state     = 'walk';
+                        e.direction = e.patrolDir > 0 ? 'right' : 'left';
+                        e.dx        = e.patrolDir * e.speed * 0.6;
+                        e.patrolTimer--;
+                        if (e.patrolTimer <= 0) {
+                            e.patrolRestTimer = 40 + Math.floor(Math.random() * 60);
+                        }
                     }
+                }
+            }
 
+            e.dy += e.gravity;
+            if (e.dy > 20) e.dy = 20;
+            e.x += e.dx;
+            e.y += e.dy;
+
+            e.grounded = false;
+            platforms.forEach(plat => {
+                const type = plat.type || 'platform';
+                if (type === 'wall') {
+                    if (e.x + e.width  > plat.x && e.x < plat.x + plat.width &&
+                        e.y + e.height > plat.y && e.y < plat.y + plat.height) {
+                        if (e.dx > 0) e.x = plat.x - e.width;
+                        else          e.x = plat.x + plat.width;
+                        e.dx = 0;
+                        e.patrolDir   = -e.patrolDir;
+                        e.patrolTimer = 0;
+                    }
+                } else if (type === 'solid') {
+                    if (e.x + e.width  > plat.x &&
+                        e.x            < plat.x + plat.width &&
+                        e.y + e.height >= plat.y &&
+                        e.y + e.height <= plat.y + Math.max(20, e.dy + 1) &&
+                        e.dy >= 0) {
+                        e.y        = plat.y - e.height;
+                        e.dy       = 0;
+                        e.grounded = true;
+                    }
+                }
+            });
+        }
+
+        // ── enemy2 ───────────────────────────────────────────────
+        // ── enemy2 ───────────────────────────────────────────────
+        if (e.type === 'enemy2') {
+
+            
+            if (e.isWindup) {
+                // 예비동작(attack1): 제자리 정지
+                e.dx = 0;
+                e.dy = 0;
+                e.state       = 'attack';
+                e.attackFrame = 1;
+                e.windupTimer--;
+
+                if (e.windupTimer <= 0) {
+                    // windup 끝 → 돌진 시작
+                    e.isWindup     = false;
+                    e.attackTimer  = e.attackDuration;
+                    e.hasHitPlayer = false;
+                }
+
+            } else if (e.attackTimer > 0) {
+                // 돌진(attack2)
+                e.attackTimer--;
+                e.state       = 'attack';
+                e.attackFrame = 2;
+
+                e.x += e.attackDirX * e.attackDashSpeed;
+                e.y += e.attackDirY * e.attackDashSpeed;
+
+                // 피격 판정 (1회)
+                if (!e.hasHitPlayer && !player.isInvincible) {
+                    const ex2 = e.x + e.width  / 2;
+                    const ey2 = e.y + e.height / 2;
+                    const px2 = player.x + player.width  / 2;
+                    const py2 = player.y + player.height / 2;
+                    // 크기 기준 판정
+                    if (Math.abs(px2 - ex2) < e.width  &&
+                        Math.abs(py2 - ey2) < e.height) {
+                        player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                        player.isInvincible    = true;
+                        player.invincibleTimer = 60;
+                        player.dx = e.attackDirX * 6;
+                        player.dy = -7;
+                        e.hasHitPlayer = true;
+                    }
+                }
+
+            } else {
+                if (e.isAggro && e.cooldownTimer <= 0) {
+                    // 공격 시작 → windup 진입
+                    const d = Math.sqrt(distX * distX + distY * distY);
+                    e.isWindup     = true;
+                    e.windupTimer  = e.attackWindup;
+                    e.cooldownTimer = e.attackCooldown;
+                    e.attackDirX   = d > 0 ? distX / d : 0;
+                    e.attackDirY   = d > 0 ? distY / d : 0;
+                    e.direction    = distX > 0 ? 'right' : 'left';
+                    e.dx = 0;
+                    e.dy = 0;
+                } else if (e.isAggro) {
                     e.state     = 'walk';
-                    e.direction = e.patrolDir > 0 ? 'right' : 'left';
-                    e.dx        = e.patrolDir * e.speed * 0.6;
-                    e.patrolTimer--;
-
-                    if (e.patrolTimer <= 0) {
-                        e.patrolRestTimer = 40 + Math.floor(Math.random() * 60);
-                    }
+                    e.direction = distX > 0 ? 'right' : 'left';
+                    e.dx = (distX > 0 ? 1 : -1) * e.speed;
+                    e.dy = (distY > 0 ? 1 : -1) * e.speedY;
+                    if (Math.abs(distX) < 20) e.dx = 0;
+                    if (Math.abs(distY) < 10) e.dy = 0;
+                    e.x += e.dx;
+                    e.y += e.dy;
+                } else {
+                    e.state = 'idle';
+                    e.floatTimer++;
+                    e.x += Math.sin(e.floatTimer * 0.02) * 0.5;
+                    e.y += Math.sin(e.floatTimer * 0.015) * 0.3;
                 }
             }
         }
-
-        e.dy += e.gravity;
-        if (e.dy > 20) e.dy = 20;
-
-        e.x += e.dx;
-        e.y += e.dy;
-
-        e.grounded = false;
-        platforms.forEach(plat => {
-            const type = plat.type || 'platform';
-            if (type === 'wall') {
-                if (e.x + e.width  > plat.x && e.x < plat.x + plat.width &&
-                    e.y + e.height > plat.y && e.y < plat.y + plat.height) {
-                    if (e.dx > 0) e.x = plat.x - e.width;
-                    else          e.x = plat.x + plat.width;
-                    e.dx = 0;
-                    e.patrolDir   = -e.patrolDir;
-                    e.patrolTimer = 0;
-                }
-            } else if (type === 'solid') {
-                if (e.x + e.width  > plat.x &&
-                    e.x            < plat.x + plat.width &&
-                    e.y + e.height >= plat.y &&
-                    e.y + e.height <= plat.y + Math.max(20, e.dy + 1) &&
-                    e.dy >= 0) {
-                    e.y        = plat.y - e.height;
-                    e.dy       = 0;
-                    e.grounded = true;
-                }
-            }
-        });
     }
 }
 
@@ -1637,23 +1768,162 @@ function drawEnemies() {
         const blinkVisible = !e.isInvincible || Math.floor(Date.now() / 80) % 2 === 0;
         if (!blinkVisible) return;
 
+        // ── enemy2 전용 렌더링 ────────────────────────────────────
+        if (e.type === 'enemy2') {
+            let imgKey2 = e.imgStand;
+            if (e.state === 'walk' || e.state === 'idle') {
+                imgKey2 = e.imgMove;
+            } else if (e.state === 'attack') {
+                imgKey2 = e.attackFrame === 2 ? e.imgAttack2 : e.imgMove;  // windup은 move 이미지
+            }
+
+            const isAttacking = e.state === 'attack';
+            const isSpinning  = isAttacking && e.attackFrame === 2;
+            const drawW2 = isSpinning ? 52 : (isAttacking ? 65 : e.width);
+            const drawH2 = isSpinning ? 65 : e.height * 1.2;
+            const drawX2 = e.x - (drawW2 - e.width) / 2;
+            const drawY2 = (e.y + e.height) - drawH2;
+            const img2   = sprites[imgKey2];
+            const cx2    = drawX2 + drawW2 / 2;
+            const cy2    = drawY2 + drawH2 / 2;
+
+            ctx.save();
+            ctx.globalAlpha = deadAlpha;
+
+            if (isSpinning) {
+                // attack2: 랜덤 각도 전환
+                if (!e._randAngle || Date.now() - (e._randAngleTime || 0) > 80) {
+                    e._randAngle     = Math.random() * Math.PI * 2;
+                    e._randAngleTime = Date.now();
+                }
+                ctx.translate(cx2, cy2);
+                ctx.rotate(e._randAngle);
+                if (img2 && img2.complete && img2.naturalWidth !== 0) {
+                    ctx.drawImage(img2, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
+                } else {
+                    ctx.fillStyle = '#cc44cc';
+                    ctx.beginPath();
+                    for (let n = 0; n < 6; n++) {
+                        const angle = (Math.PI / 3) * n - Math.PI / 6;
+                        const r = drawW2 / 2;
+                        n === 0
+                            ? ctx.moveTo(r * Math.cos(angle), r * Math.sin(angle))
+                            : ctx.lineTo(r * Math.cos(angle), r * Math.sin(angle));
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = 'white';
+                    ctx.font = '10px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('atk2', 0, 4);
+                    ctx.textAlign = 'left';
+                }
+            } else {
+                // 이동/대기/windup: 방향 반전 + windup 시 뒤로 기울기
+                const windupTilt = (isAttacking && e.attackFrame === 1)
+                    ? (e.direction === 'right' ? -0.3 : 0.3)
+                    : 0;
+
+                if (windupTilt !== 0) {
+                    ctx.translate(cx2, cy2);
+                    ctx.rotate(windupTilt);
+                    ctx.translate(-cx2, -cy2);
+                }
+
+                if (e.direction === 'right') {
+                    ctx.translate(drawX2 + drawW2, drawY2);
+                    ctx.scale(-1, 1);
+                    if (img2 && img2.complete && img2.naturalWidth !== 0) {
+                        ctx.drawImage(img2, 0, 0, drawW2, drawH2);
+                    } else {
+                        ctx.fillStyle = isAttacking ? '#993399' :
+                                        e.state === 'walk' ? '#aa44bb' : '#774499';
+                        ctx.beginPath();
+                        for (let n = 0; n < 6; n++) {
+                            const angle = (Math.PI / 3) * n - Math.PI / 6;
+                            const r = drawW2 / 2;
+                            n === 0
+                                ? ctx.moveTo(drawW2 / 2 + r * Math.cos(angle), drawH2 / 2 + r * Math.sin(angle))
+                                : ctx.lineTo(drawW2 / 2 + r * Math.cos(angle), drawH2 / 2 + r * Math.sin(angle));
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.fillStyle = 'white';
+                        ctx.font = '10px monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(e.state, drawW2 / 2, drawH2 / 2 + 4);
+                        ctx.textAlign = 'left';
+                    }
+                } else {
+                    if (img2 && img2.complete && img2.naturalWidth !== 0) {
+                        ctx.drawImage(img2, drawX2, drawY2, drawW2, drawH2);
+                    } else {
+                        const cx = e.x + e.width  / 2;
+                        const cy = e.y + e.height / 2;
+                        const r  = drawW2 / 2;
+                        ctx.fillStyle = isAttacking ? '#993399' :
+                                        e.state === 'walk' ? '#aa44bb' : '#774499';
+                        ctx.beginPath();
+                        for (let n = 0; n < 6; n++) {
+                            const angle = (Math.PI / 3) * n - Math.PI / 6;
+                            n === 0
+                                ? ctx.moveTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle))
+                                : ctx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.fillStyle = 'white';
+                        ctx.font = '10px monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(e.state, cx, cy + 4);
+                        ctx.textAlign = 'left';
+                    }
+                }
+            }
+
+            ctx.restore();
+
+            if (e.hpVisible && !e.isDead) {
+                const barW  = e.width;
+                const barH  = 5;
+                const barX  = e.x;
+                const barY  = e.y - 12;
+                const ratio = e.hp / e.maxHp;
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+                ctx.fillStyle = ratio > 0.5 ? '#44cc44' :
+                                ratio > 0.25 ? '#ccaa00' : '#cc3333';
+                ctx.fillRect(barX, barY, barW * ratio, barH);
+            }
+            return;  // enemy2 렌더링 종료
+        }
+
+        // ── enemy1 렌더링 ─────────────────────────────────────────
         let imgKey = e.imgStand;
-        if (e.state === 'walk') {
-            imgKey = e.imgMove;
-        } else if (e.state === 'attack') {
-            if      (e.attackFrame === 1) imgKey = e.imgAttack1;
-            else if (e.attackFrame === 2) imgKey = e.imgAttack2;
-            else                          imgKey = e.imgAttack3;
+
+        if (e.type === 'enemy1') {
+            if (e.state === 'walk') {
+                imgKey = e.imgMove;
+            } else if (e.state === 'attack') {
+                if      (e.attackFrame === 1) imgKey = e.imgAttack1;
+                else if (e.attackFrame === 2) imgKey = e.imgAttack2;
+                else                          imgKey = e.imgAttack3;
+            }
         }
 
         const img = sprites[imgKey];
 
-        const scaleW = (e.attackFrame === 2 || e.attackFrame === 3) ? 1.25 : 1.0;
-        const scaleH = e.attackFrame === 2 ? 1.15 : 1.0;
-        const drawW  = e.width  * scaleW;
-        const drawH  = e.height * 1.4 * scaleH;
-        const drawX  = e.x + (e.attack3OffsetX || 0) - (drawW - e.width) / 2;
-        const drawY  = (e.y + e.height) - drawH;
+        let scaleW = 1.0, scaleH = 1.0;
+        if (e.type === 'enemy1') {
+            scaleW = (e.attackFrame === 2 || e.attackFrame === 3) ? 1.25 : 1.0;
+            scaleH = e.attackFrame === 2 ? 1.15 : 1.0;
+        }
+
+        const drawW   = e.width  * scaleW;
+        const drawH   = e.height * 1.4 * scaleH;
+        const offsetX = e.attack3OffsetX || 0;
+        const drawX   = e.x + offsetX - (drawW - e.width) / 2;
+        const drawY   = (e.y + e.height) - drawH;
 
         ctx.save();
         ctx.globalAlpha = deadAlpha;
@@ -1685,7 +1955,6 @@ function drawEnemies() {
             const barX  = e.x;
             const barY  = e.y - 12;
             const ratio = e.hp / e.maxHp;
-
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
             ctx.fillStyle = ratio > 0.5 ? '#44cc44' :
@@ -1694,6 +1963,7 @@ function drawEnemies() {
         }
     });
 }
+
 
 // [START] 게임 엔진 구동
 document.fonts.ready.then(() => {
