@@ -249,7 +249,7 @@ const player = {
     hp: 100, maxHp: 100,
     attackPower: 20,
     airAttackOriginY: 0,
-    gauge: 0, maxGauge: 100,
+    gauge: 100, maxGauge: 100,
     gaugePerHit: 10,
 
     // 필살기 연출 상태
