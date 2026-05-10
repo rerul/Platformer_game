@@ -47,14 +47,16 @@ const ASSETS = {
 };
 
 const SOUNDS = {
-    JUMP:           { src: './assets/audio/player_jump.wav',      volume: 0.4 },
-    ATTACK1:        { src: './assets/audio/player_attack1.wav',   volume: 1.0 },
-    ATTACK2:        { src: './assets/audio/player_attack2.wav',   volume: 1.0 },
-    DASH:           { src: './assets/audio/player_dash.wav',      volume: 1.0 },
-    TELEPORT:       { src: './assets/audio/player_teleport.wav',  volume: 1.0 },
-    ENEMY1_ATTACK1: { src: './assets/audio/enemy1_attack1.wav',   volume: 1.0 },
-    ENEMY1_ATTACK2: { src: './assets/audio/enemy1_attack2.wav',   volume: 1.0 },
-    ENEMY2_ATTACK1: { src: './assets/audio/enemy2_attack1.wav', volume: 1.0 }
+    JUMP:           { src: './assets/audio/player_jump.wav',      volume: 0.2 },
+    ATTACK1:        { src: './assets/audio/player_attack1.wav',   volume: 0.5 },
+    ATTACK2:        { src: './assets/audio/player_attack2.wav',   volume: 0.5 },
+    DASH:           { src: './assets/audio/player_dash.wav',      volume: 0.5 },
+    TELEPORT:       { src: './assets/audio/player_teleport.wav',  volume: 0.5 },
+    ULT_1:   { src: './assets/audio/ult_1.wav',     volume: 0.5 },
+    ULT_FINAL: { src: './assets/audio/ult_final.wav', volume: 0.5 }, 
+    ENEMY1_ATTACK1: { src: './assets/audio/enemy1_attack1.wav',   volume: 0.5 },
+    ENEMY1_ATTACK2: { src: './assets/audio/enemy1_attack2.wav',   volume: 0.5 },
+    ENEMY2_ATTACK1: { src: './assets/audio/enemy2_attack1.wav', volume: 0.5 }
 };
 
 const BGM = {
@@ -256,9 +258,9 @@ const player = {
     ultTargetX: 0,
     ultTargetY: 0,
     ultCamStartX: 0,
-    ultCamDuration: 50,
-    ultVanishDuration: 14,
-    ultHiddenDuration: 8,
+    ultCamDuration: 33,
+    ultVanishDuration: 9,
+    ultHiddenDuration: 5,
 };
 
 // [SECTION 5] 지형 데이터 (Map / Platforms)
@@ -620,10 +622,11 @@ function checkPlayerAttackHit() {
     const atkYMin = Math.min(currentCY, originCY) - upwardBonus;
     const atkYMax = Math.max(currentCY, originCY);
 
+    let hitCharged = false;  // 이번 공격에 게이지 충전 여부
+
     enemies.forEach(e => {
         if (e.isDead || e.isInvincible) return;
 
-        // 외형 기준 히트박스 (drawEnemies와 동일한 계산)
         const scaleW   = (e.type === 'enemy1' && (e.attackFrame === 2 || e.attackFrame === 3)) ? 1.25 : 1.0;
         const scaleH   = (e.type === 'enemy1' && e.attackFrame === 2) ? 1.15 : 1.0;
         const hitW     = e.width  * scaleW * 1.0;
@@ -639,22 +642,26 @@ function checkPlayerAttackHit() {
 
         if (inX && inY) {
             e.takeDamage(player.attackPower);
-            // 게이지 충전
-            player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+            if (!hitCharged) {
+                player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+                hitCharged = true;
+            }
         }
     });
 
     // 허수아비 피격 판정
     dummies.forEach(d => {
-        if (d.hitTimer > 0) return; // 짧은 무적
+        if (d.hitTimer > 0) return;
         const inX = atkXMax >= d.x && atkXMin <= d.x + d.width;
         const inY = (atkYMax + player.height / 2) >= d.y &&
                     (atkYMin - player.height / 2) <= d.y + d.height;
         if (inX && inY) {
             d.hitTimer  = 20;
             d.hitEffect = 8;
-            // 게이지 충전 (허수아비도 동일하게 충전)
-            player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+            if (!hitCharged) {
+                player.gauge = Math.min(player.gauge + player.gaugePerHit, player.maxGauge);
+                hitCharged = true;
+            }
         }
     });
 }
@@ -738,7 +745,8 @@ function draw() {
     ctx.textAlign = 'left';
 
     // 7-5: 잔상
-    if (typeof afterimages !== 'undefined') {
+    // 7-5: 잔상 (필살기 연출 중엔 숨김)
+    if (typeof afterimages !== 'undefined' && player.ultPhase === 'none') {
         afterimages.forEach(img => {
             drawSprite(img.imageKey, img.x, img.y, img.width, img.height, img.direction, img.opacity);
         });
@@ -795,14 +803,13 @@ function draw() {
     // 페이즈별 렌더링 제어
     let blinkVisible;
     if (player.ultPhase === 'vanish') {
-        // JUMP1으로 짧게 표시
         blinkVisible = true;
-    } else if (player.ultPhase === 'hidden' || player.ultPhase === 'camMove') {
-        // 완전히 숨김
+    } else if (player.ultPhase === 'hidden' ||
+               player.ultPhase === 'camMove' ||
+               player.ultPhase === 'fire') {
         blinkVisible = false;
-    } else if (player.ultPhase === 'fire') {
-        // 출현 시 표시
-        blinkVisible = true;
+    } else if (player.ultPhase === 'appear') {
+        blinkVisible = Math.floor(Date.now() / 40) % 2 === 0;
     } else {
         blinkVisible = !player.isInvincible ||
                         player.isDashing     ||
@@ -816,7 +823,8 @@ function draw() {
     // 7-5-1: 순간이동 잔상
     updateTeleportTrails();
     drawTeleportTrails();
-    drawUltParticles(); 
+    drawUltParticles();
+    drawSlashEffects();  // ← 추가
 
     // 7-6: 적 렌더링
     drawEnemies();
@@ -969,16 +977,16 @@ const projectile = {
 };
 // [SECTION 9] 대시 및 순간이동 (Skills)
 function startDash() {
-    player.isDashing = true;
+    player.isDashing    = true;
     player.isInvincible = true;
     player.lastDashTime = Date.now();
-    playSound('DASH');
+    if (player.ultPhase === 'none') playSound('DASH');
 
     const dashDir = (player.direction === 'right' ? 1 : -1);
     player.dx = dashDir * player.dashSpeed;
 
     setTimeout(() => {
-        player.isDashing = false;
+        player.isDashing    = false;
         player.isInvincible = false;
     }, player.dashDuration);
 }
@@ -2207,25 +2215,31 @@ const ultimate = {
 // 필살기 파티클
 const ultParticles = [];
 
-function spawnUltParticles() {
-    // 플레이어 뒤쪽(이동 반대 방향)으로 파티클 방출
+// 참격 이펙트 목록
+const slashEffects = [];
+
+// 필살기 타임라인 (handleQKey에서 동적 생성)
+let ULT_TIMELINE = [];
+const ULT_FIRE_DURATION = 64;
+
+function spawnUltParticles(count) {
     const backDir = player.direction === 'right' ? -1 : 1;
     const cx = player.x + player.width  / 2;
     const cy = player.y + player.height / 2;
-
-    for (let i = 0; i < 18; i++) {
-        const spread  = (Math.random() - 0.5) * 2.2;   // 위아래 퍼짐
-        const speed   = 3.5 + Math.random() * 5;
-        const angle   = Math.atan2(spread, backDir);
+    for (let i = 0; i < count; i++) {
+        const spread = (Math.random() - 0.5) * 3.2;
+        const speed  = 4 + Math.random() * 7;
+        const angle  = Math.atan2(spread, backDir);
         ultParticles.push({
-            x:       cx,
-            y:       cy,
-            dx:      Math.cos(angle) * speed,
-            dy:      Math.sin(angle) * speed - Math.random() * 2, // 살짝 위로
-            life:    1.0,
-            decay:   0.045 + Math.random() * 0.03,
-            size:    3 + Math.random() * 5,
-            color:   Math.random() < 0.6 ? '#88ccff' : '#ffffff'
+            x:     cx,
+            y:     cy,
+            dx:    Math.cos(angle) * speed,
+            dy:    Math.sin(angle) * speed - Math.random() * 3,
+            life:  1.0,
+            decay: 0.03 + Math.random() * 0.025,
+            size:  4 + Math.random() * 7,
+            color: Math.random() < 0.6 ? '#88ccff'
+                 : Math.random() < 0.5 ? '#ffffff' : '#aaddff'
         });
     }
 }
@@ -2235,8 +2249,8 @@ function updateUltParticles() {
         const p = ultParticles[i];
         p.x    += p.dx;
         p.y    += p.dy;
-        p.dy   += 0.18;   // 중력
-        p.dx   *= 0.88;   // 감속
+        p.dy   += 0.18;
+        p.dx   *= 0.88;
         p.life -= p.decay;
         if (p.life <= 0) ultParticles.splice(i, 1);
     }
@@ -2251,6 +2265,197 @@ function drawUltParticles() {
         ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+    });
+}
+
+function spawnSlash(cx, cy, angleDeg) {
+    slashEffects.push({
+        type:         'slash',
+        cx, cy,
+        angle:        angleDeg * Math.PI / 180,
+        length:       280 + Math.random() * 60,
+        life:         1.0,
+        decay:        0.055,
+        width:        22,
+        color:        '#ffe066',
+        glow:         '#ffaa00',
+        drawProgress: 0,
+        drawSpeed:    0.18
+    });
+}
+
+function spawnCross(cx, cy) {
+    slashEffects.push({
+        type:         'cross',
+        cx, cy,
+        angle:        0,
+        length:       1600,
+        life:         1.0,
+        decay:        0.032,
+        width:        32,
+        color:        '#fff0a0',
+        glow:         '#ffcc00',
+        drawProgress: 0,
+        drawSpeed:    0.14
+    });
+}
+
+function updateSlashEffects() {
+    for (let i = slashEffects.length - 1; i >= 0; i--) {
+        const s = slashEffects[i];
+        if (s.drawProgress < 1) {
+            s.drawProgress = Math.min(s.drawProgress + s.drawSpeed, 1);
+        } else {
+            s.life -= s.decay;
+        }
+        if (s.life <= 0) slashEffects.splice(i, 1);
+    }
+}
+
+function drawSingleSlash(s) {
+    const fullHalf = s.length / 2;
+    const isCross  = s.type === 'cross';
+    const bend     = isCross ? 0 : fullHalf * 2 * 0.28;
+
+    // 오른쪽 끝에서 왼쪽으로 그려지도록
+    const startX = fullHalf;
+    const endX   = fullHalf - fullHalf * 2 * s.drawProgress;
+
+    ctx.save();
+    ctx.rotate(s.angle || 0);
+
+    const arcPath = (w) => {
+        if (s.drawProgress < 0.01) return;
+        ctx.beginPath();
+        ctx.moveTo(startX, 0);
+        ctx.quadraticCurveTo(
+            startX - (startX - endX) * 0.5,
+            -bend * s.drawProgress - w * 0.5,
+            endX, 0
+        );
+        ctx.quadraticCurveTo(
+            startX - (startX - endX) * 0.5,
+            -bend * s.drawProgress + w * 0.5,
+            startX, 0
+        );
+        ctx.closePath();
+    };
+
+    const straightPath = (w) => {
+        if (s.drawProgress < 0.01) return;
+        ctx.beginPath();
+        ctx.moveTo(startX, 0);
+        ctx.quadraticCurveTo(
+            startX - (startX - endX) * 0.5,
+            -w * 0.55,
+            endX, 0
+        );
+        ctx.quadraticCurveTo(
+            startX - (startX - endX) * 0.5,
+            w * 0.55,
+            startX, 0
+        );
+        ctx.closePath();
+    };
+
+    const pathFn = isCross ? straightPath : arcPath;
+
+    if (isCross) {
+        const layers = [
+            { w: 1.8,  color: s.glow,    alpha: 0.18 },
+            { w: 1.3,  color: s.glow,    alpha: 0.35 },
+            { w: 1.1,  color: s.glow,    alpha: 0.6  },
+            { w: 0.72, color: s.color,   alpha: 1.0  },
+            { w: 0.22, color: '#ffffff', alpha: 0.7  }
+        ];
+        layers.forEach(l => {
+            ctx.save();
+            ctx.globalAlpha *= l.alpha;
+            ctx.fillStyle = l.color;
+            pathFn(s.width * l.w);
+            ctx.fill();
+            ctx.restore();
+        });
+    } else {
+        // 글로우
+        ctx.save();
+        ctx.shadowColor = s.glow;
+        ctx.shadowBlur  = 36;
+        ctx.strokeStyle = s.glow;
+        ctx.lineWidth   = s.width * 2.2;
+        ctx.lineCap     = 'round';
+        ctx.globalAlpha *= 0.25;
+        ctx.beginPath();
+        ctx.moveTo(startX, 0);
+        ctx.quadraticCurveTo(
+            startX - (startX - endX) * 0.5,
+            -bend * s.drawProgress,
+            endX, 0
+        );
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle   = s.glow;
+        ctx.shadowColor = s.glow;
+        ctx.shadowBlur  = 22;
+        pathFn(s.width * 1.1);
+        ctx.fill();
+
+        ctx.fillStyle  = s.color;
+        ctx.shadowBlur = 8;
+        pathFn(s.width * 0.72);
+        ctx.fill();
+
+        ctx.fillStyle   = '#ffffff';
+        ctx.shadowBlur  = 0;
+        ctx.globalAlpha *= 0.7;
+        pathFn(s.width * 0.22);
+        ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+function drawSlashEffects() {
+    slashEffects.forEach(s => {
+        ctx.save();
+        ctx.globalAlpha = s.drawProgress < 1 ? 1 : s.life * s.life;
+        ctx.translate(s.cx, s.cy);
+
+        if (s.type === 'slash') {
+            drawSingleSlash(s);
+        } else if (s.type === 'cross') {
+            ctx.save();
+            ctx.rotate(30 * Math.PI / 180);
+            drawSingleSlash(s);
+            ctx.restore();
+            ctx.save();
+            ctx.rotate(-30 * Math.PI / 180);
+            drawSingleSlash(s);
+            ctx.restore();
+        }
+
+        ctx.restore();
+    });
+}
+
+function doUltHit(isCross) {
+    const atkRange = isCross ? 380 : 200;
+    const damage   = isCross ? player.attackPower * 2 : player.attackPower * 1;
+    const px = player.x + player.width  / 2;
+    const py = player.y + player.height / 2;
+    enemies.forEach(e => {
+        if (e.isDead) return;
+        const ex = e.x + e.width  / 2;
+        const ey = e.y + e.height / 2;
+        if (Math.abs(px - ex) < atkRange && Math.abs(py - ey) < atkRange) {
+            e.hp              = Math.max(e.hp - damage, 0);
+            e.hpVisible       = true;
+            e.isAggro         = true;
+            e.isInvincible    = true;
+            e.invincibleTimer = 20;
+            if (e.hp <= 0) e.isDead = true;
+        }
     });
 }
 
@@ -2270,11 +2475,19 @@ function handleQKey() {
         player.ultTargetY = player.y;
     }
 
-    // 목적지 방향으로 바라보기
     const diffX = player.ultTargetX - player.x;
     if (Math.abs(diffX) > 10) {
         player.direction = diffX > 0 ? 'right' : 'left';
     }
+
+    // 매 발동마다 랜덤 각도로 타임라인 생성
+    ULT_TIMELINE = [
+        { frame: 5,  type: 'slash', angle: Math.random() * 360, done: false },
+        { frame: 12, type: 'slash', angle: Math.random() * 360, done: false },
+        { frame: 19, type: 'slash', angle: Math.random() * 360, done: false },
+        { frame: 26, type: 'slash', angle: Math.random() * 360, done: false },
+        { frame: 39, type: 'cross', done: false }
+    ];
 
     player.ultCamStartX = camera.x;
     player.ultPhase     = 'vanish';
@@ -2291,8 +2504,7 @@ function updateUltimatePhase() {
         if (player.ultTimer <= 0) {
             player.ultPhase = 'hidden';
             player.ultTimer = player.ultHiddenDuration;
-            // 사라지는 순간 파티클 방출
-            spawnUltParticles();
+            spawnUltParticles(40);
         }
 
     } else if (player.ultPhase === 'hidden') {
@@ -2306,7 +2518,6 @@ function updateUltimatePhase() {
         updateUltParticles();
         const t    = 1 - player.ultTimer / player.ultCamDuration;
         const ease = t * t * (3 - 2 * t);
-
         const logicalW   = canvas.width / SCALE;
         const targetCamX = Math.max(0,
             Math.min(player.ultTargetX - logicalW / 2 + player.width / 2,
@@ -2318,47 +2529,74 @@ function updateUltimatePhase() {
             player.y  = player.ultTargetY;
             player.dy = 0;
 
-            player.ultPhase = 'fire';
-            player.ultTimer = ultimate.duration;
-            ultimate.active = true;
-            ultimate.timer  = ultimate.duration;
-            ultimate.alpha  = 1;
+            player.ultPhase   = 'fire';
+            player.ultTimer   = ULT_FIRE_DURATION;
+            ultimate.active   = true;
+            ultimate.timer    = ULT_FIRE_DURATION;
+            ultimate.duration = ULT_FIRE_DURATION;
+            ultimate.alpha    = 0;
 
-            const atkRange = 300;
-            const px = player.x + player.width / 2;
-            const py = player.y + player.height / 2;
-            enemies.forEach(e => {
-                if (e.isDead) return;
-                const ex = e.x + e.width  / 2;
-                const ey = e.y + e.height / 2;
-                if (Math.abs(px - ex) < atkRange && Math.abs(py - ey) < atkRange) {
-                    e.takeDamage(player.attackPower * 3);
-                }
-            });
+            ULT_TIMELINE.forEach(e => e.done = false);
         }
 
     } else if (player.ultPhase === 'fire') {
         updateUltParticles();
+        updateSlashEffects();
+
+        const elapsed = ULT_FIRE_DURATION - player.ultTimer;
+
+        ULT_TIMELINE.forEach(entry => {
+            if (!entry.done && elapsed >= entry.frame) {
+                entry.done = true;
+                const cx = player.x + player.width  / 2;
+                const cy = player.y + player.height / 2;
+                if (entry.type === 'slash') {
+                    spawnSlash(cx, cy, entry.angle);
+                    doUltHit(false);
+                    spawnUltParticles(8);
+                    playSound('ULT_1');
+                } else if (entry.type === 'cross') {
+                    spawnCross(cx, cy);
+                    doUltHit(true);
+                    spawnUltParticles(20);
+                    playSound('ULT_FINAL');
+                    ultimate.alpha = 1;
+                }
+            }
+        });
+
         ultimate.timer--;
-        ultimate.alpha = ultimate.timer / ultimate.duration;
-        if (ultimate.timer <= 0) {
+        const crossDone = ULT_TIMELINE[ULT_TIMELINE.length - 1].done;
+        ultimate.alpha = crossDone
+            ? Math.max(0, ultimate.timer / ULT_FIRE_DURATION)
+            : 0;
+
+        if (player.ultTimer <= 0) {
             ultimate.active = false;
+            player.ultPhase = 'appear';
+            player.ultTimer = 10;
+        }
+
+    } else if (player.ultPhase === 'appear') {
+        updateUltParticles();
+        updateSlashEffects();
+        player.ultTimer--;
+        if (player.ultTimer <= 0) {
             player.ultPhase = 'none';
+            slashEffects.length = 0;   // 잔상 강제 제거
+            ultParticles.length = 0;
         }
     }
 }
 
 function drawUltimate() {
-    if (!ultimate.active) return;
-    const progress = 1 - ultimate.timer / ultimate.duration;
+    if (!ultimate.active || ultimate.alpha <= 0) return;
     ctx.save();
-    ctx.globalAlpha = ultimate.alpha * (1 - progress * 0.5);
-    ctx.fillStyle   = '#66aaff';
+    ctx.globalAlpha = ultimate.alpha * 0.55;
+    ctx.fillStyle   = '#ffdd88';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
 }
-
-
 // [START] 게임 엔진 구동
 document.fonts.ready.then(() => {
     loadAssets(() => {
