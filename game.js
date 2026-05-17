@@ -32,6 +32,109 @@ const tutorial = {
     pages:       [],
     currentPage: 0
 };
+
+// 위치 트리거 힌트 (튜토리얼 맵 전용)
+const tutHint = {
+    active:     false,
+    shown:      false,
+    text:       'Space(공중)  —  2단 점프',
+    blinkTimer: 0,
+    triggerX:   1800,    // barrier(x=2200) 400px 앞에서 표시
+    hideX:      3500,    // 덩굴(x=3630) 앞에서 숨김
+};
+
+// 대시 힌트 (가시덩굴 앞에서 표시)
+const dashHint = {
+    active:     false,
+    shown:      false,
+    blinkTimer: 0,
+    triggerX:   3450,    // 덩굴(x=3630) 180px 앞에서 표시
+    hideX:      3660,    // 덩굴에 닿으면 사라짐
+};
+
+// 순간이동 힌트 (telewall 앞에서 표시) — teleMonologue(5150) 이후에 표시
+const teleHint = {
+    active:     false,
+    shown:      false,
+    blinkTimer: 0,
+    triggerX:   5200,    // teleMonologue 독백 끝난 뒤 가까이서 표시
+    hideX:      5410,    // telewall에 닿으면 사라짐
+};
+
+// ── 맵2 이벤트 영구 플래그 (맵 재진입해도 리셋되지 않음) ──────────────
+const map2Events = {
+    tutHintShown:            false,
+    moveHintActive:          false,
+    dashHintShown:           false,
+    teleHintShown:           false,
+    thornMonologueShown:     false,
+    teleMonologueShown:      false,
+    teleAfterMonologueShown: false,
+    dialogueShown:           false,
+    cutTriggered:            false,
+    killMonologueDone:       false,
+    introPlayed:             false,
+};
+
+// 덩굴 직전 독백 트리거
+const thornMonologue = {
+    shown:    false,
+    triggerX: 3380,   // 덩굴(x=3630) 250px 앞
+};
+
+// telewall 직전 독백 트리거
+const teleMonologue = {
+    shown:    false,
+    triggerX: 5150,   // telewall(x=5400) 250px 앞
+};
+
+// telewall 통과 직후 독백 트리거
+const teleAfterMonologue = {
+    shown:    false,
+    triggerX: 5460,   // telewall(x=5400+40=5440) 통과 직후
+};
+const moveHint = {
+    active:     false,
+    blinkTimer: 0,
+    hideX:      1300,   // tutHint.triggerX 보다 조금 앞에서 사라짐
+};
+
+// 전투 튜토리얼 상태 (튜토리얼 맵 전용)
+const combatTutorial = {
+    // ── 기존 ──
+    dialogueShown:  false,
+    hintActive:     false,
+    hintShown:      false,
+    blinkTimer:     0,
+    triggerDistX:   400,     // 대화 발동 거리
+
+    // ── 컷신 (적 발견 연출) ──
+    // phase: 'idle' | 'freeze' | 'zoomToEnemy' | 'hold' | 'zoomBack' | 'monologue' | 'done'
+    cutPhase:       'idle',
+    cutTimer:       0,
+    cutTriggerX:    6000,    // 이 X에 플레이어가 도달하면 컷신 시작 (적 x=6600, 화면 밖)
+    cutTriggered:   false,
+
+    // 줌·카메라 보간용
+    cutScale:       1,
+    cutCamX:        0,
+    cutCamY:        0,
+    savedScale:     1,       // 컷신 전 원래 SCALE
+    savedCamX:      0,
+    savedCamY:      0,
+    targetCamX:     0,       // 적 위치 기준 목표 카메라
+    targetCamY:     0,
+    zoomInScale:    0,       // BASE_SCALE * 1.6 (진입 시 계산)
+
+    // 각 페이즈 지속 프레임
+    FREEZE_DUR:     18,
+    ZOOM_IN_DUR:    40,
+    HOLD_DUR:       90,
+    ZOOM_OUT_DUR:   40,
+
+    // ── 처치 후 독백 ──
+    killMonologueDone: false,
+};
 // [SECTION 2] 자산 관리 (Asset Management)
 const ASSETS = {
     PLAYER_STAND:    './assets/images/player_stand.png',
@@ -43,6 +146,8 @@ const ASSETS = {
     ATTACK2:         './assets/images/player_attack2.png',
     JUMP_ATTACK1:    './assets/images/player_jump_attack1.png',
     JUMP_ATTACK2:    './assets/images/player_jump_attack2.png',
+    PLAYER_FALL_DOWN: './assets/images/player_fall_down.png',
+    PLAYER_WAKE_UP:   './assets/images/player_wake_up.png',
     STORY1:          './assets/images/player_story1.png',
     NPC1_STORY:      './assets/images/npc1_story.png',
     PROJECTILE:      './assets/images/player_projectile.png',
@@ -61,7 +166,11 @@ const ASSETS = {
     ENEMY3_ATTACK2:  './assets/images/enemy3_attack2.png',
     ENEMY3_ATTACK3:  './assets/images/enemy3_attack3.png',
     ENEMY3_ATTACK4:  './assets/images/enemy3_attack4.png',
-    ENEMY3_ARROW:    './assets/images/enemy3_arrow.png'
+    ENEMY3_ARROW:    './assets/images/enemy3_arrow.png',
+    ENEMY1_STORY:    './assets/images/enemy1_story.png',
+    BG_FOREST:       './assets/images/background_forest.png',
+    BG_FOREST2:      './assets/images/background_forest2.png',
+    BG_CLIFF:        './assets/images/background_cliff.png'
 };
 
 const SOUNDS = {
@@ -198,6 +307,7 @@ function playSoundImmediate(key) {
 const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false, q: false, qPressed: false, u: false, uPressed: false, i: false, iPressed: false };
 
 let audioUnlocked = false;
+let audioMuted    = true;
 function unlockAudio() {
     if (audioUnlocked) return;
     audioUnlocked = true;
@@ -210,8 +320,10 @@ function unlockAudio() {
             snd.volume = v;
         }).catch(() => {});
     });
-    // 언락 후 BGM 시작
+    // 언락 후 BGM 시작 (뮤트 상태 반영)
     bgmPlayer.play('BGM1');
+    if (bgmPlayer.current) bgmPlayer.current.muted = audioMuted;
+    Object.values(sounds).forEach(snd => { snd.muted = audioMuted; });
 }
 
 window.addEventListener('mousedown', (e) => {
@@ -248,7 +360,29 @@ window.addEventListener('keydown', (e) => {
     }
     if (key === 'e') handleEKey();
     if (key === 'f') handleFKey();
+    // 테스트용 단축키: 1 = 튜토리얼 맵(2번)으로 즉시 이동
+    if (key === '1') {
+        projectile.reset();
+        introSeq.phase = 'idle';   // 혹시 이전 인트로 상태 초기화
+        SCALE = BASE_SCALE;
+        loadMap(2);
+        // onEnter에서 player 위치 및 startTutorialIntro() 처리
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 2 = 맵3으로 즉시 이동
+    if (key === '2') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(3);
+        _snapCameraToPlayer();
+    }
     if (key === 'q' && !keys.qPressed) { keys.q = true; keys.qPressed = true; handleQKey(); }
+    if (key === 'm') {
+        audioMuted = !audioMuted;
+        if (bgmPlayer.current) bgmPlayer.current.muted = audioMuted;
+        Object.values(sounds).forEach(snd => { snd.muted = audioMuted; });
+    }
     // U = 좌클릭과 동일
     if (key === 'u' && !keys.uPressed) {
         keys.u = true;
@@ -308,6 +442,7 @@ const player = {
     airAttackOriginY: 0,
     gauge: 0, maxGauge: 100,
     gaugePerHit: 10,
+    thornsPushTimer: 0,   // 덩굴에 튕긴 직후 오른쪽 이동 억제 타이머
 
     // 필살기 연출 상태
     ultPhase: 'none',   // 'none' | 'vanish' | 'hidden' | 'camMove' | 'fire'
@@ -458,7 +593,74 @@ const MAP_DATA = [
     }
 ];
 
-let platforms = [];
+// ── 튜토리얼 맵 (맵 2) ────────────────────────────────────────────
+// MAP_DATA[2]로 직접 접근. 배열 리터럴 밖에 push해서 onEnter 함수 참조 문제를 방지
+MAP_DATA.push({
+    id: 2,
+    worldWidth:  8000,
+    worldHeight: 800,
+    bgColor: '#d4e8f5',
+    spawnX: 820,
+    spawnY: 560,                 // 바닥y=640, 플레이어 높이=80
+
+    platforms: [
+        { x: 0,    y: 640, width: 8000, height: 160, type: 'solid' },   // 바닥
+        { x: -60,  y: 0,   width: 60,   height: 800, type: 'wall'  },   // 왼쪽 벽
+        { x: 8000, y: 0,   width: 60,   height: 800, type: 'wall'  },   // 오른쪽 벽
+
+        // ── 2단점프 전용 고벽 (barrier) ─────────────────────────────
+        { x: 2200, y: 440, width: 80, height: 200, type: 'barrier' },
+
+        // ══ 구간 2→3 (barrier~덩굴) 사이 ════════════════════════════
+        { x: 2600, y: 510, width: 140, height: 18,  type: 'platform' },
+        // 낮은 통나무 — 1단 점프로 넘을 수 있는 높이
+        { x: 2900, y: 520, width: 90,  height: 120, type: 'log' },
+        { x: 3180, y: 490, width: 130, height: 18,  type: 'platform' },
+
+        // ══ 구간 3→4 (덩굴~telewall) 사이 ═══════════════════════════
+        { x: 3900, y: 500, width: 140, height: 18,  type: 'platform' },
+        { x: 4560, y: 480, width: 130, height: 18,  type: 'platform' },
+        { x: 5150, y: 500, width: 140, height: 18,  type: 'platform' },
+
+        // ── 순간이동 전용 벽 (telewall) ──────────────────────────────
+        { x: 5400, y: -200, width: 40, height: 1000, type: 'telewall' },
+
+        // ══ 구간 5: telewall 통과 후 → enemy1 → 출구 ════════════════
+        { x: 5700, y: 500, width: 160, height: 18,  type: 'platform' },
+        { x: 6200, y: 480, width: 160, height: 18,  type: 'platform' },
+        { x: 6900, y: 500, width: 160, height: 18,  type: 'platform' },
+        { x: 7350, y: 480, width: 160, height: 18,  type: 'platform' },
+        { x: 7760, y: 500, width: 200, height: 18,  type: 'platform' },   // 출구 앞 발판
+    ],
+
+    signs: [],
+    spikes: [
+        // 가시덩굴: y=-200(맵 위 경계 밖)부터 height=1000으로 아래까지 완전 차단
+        { x: 3630, y: -200, width: 30, height: 1000, damage: 3, isThorns: true },
+    ],
+    enemies: [
+        // telewall(x=5400) 통과 후 충분한 거리에 배치된 전투 튜토리얼용 enemy1
+        { type: 'enemy1', x: 6600, y: 640, isTutorialEnemy: true },
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: 7990, y: 400,
+            width: 80, height: 240,
+            toMap: 3, spawnX: 100, spawnY: 3070,
+            direction: 'right',
+            requireTutorialKill: true   // 튜토리얼 enemy1 처치 전까지 잠김
+        }
+    ],
+    onEnter: () => {
+        player.x       = MAP_DATA[2].spawnX;
+        player.y       = MAP_DATA[2].spawnY;
+        player.dx      = 0;
+        player.dy      = 0;
+        player.grounded = true;
+        startTutorialIntro();
+    }
+});
 let signs     = [];
 let spikes    = [];
 let enemies   = [];
@@ -486,8 +688,59 @@ function loadMap(mapIndex) {
     platforms       = map.platforms;
     signs           = map.signs;
     spikes          = map.spikes || [];
-    enemies         = (map.enemies || []).map(e => createEnemy(e.type, e.x, e.y));
-    dummies         = (map.dummies || []).map(d => createDummy(d.x, d.y));
+
+    // 맵2는 한 번 클리어하면 적 리스폰 없음
+    if (mapIndex === 2 && map2Events.killMonologueDone) {
+        enemies = [];
+    } else {
+        enemies = (map.enemies || []).map(e => createEnemy(e.type, e.x, e.y, e));
+    }
+
+    dummies = (map.dummies || []).map(d => createDummy(d.x, d.y));
+
+    // 튜토리얼 힌트 리셋 (맵2는 map2Events로 복원)
+    tutHint.active     = false;
+    tutHint.shown      = false;
+    tutHint.blinkTimer = 0;
+    moveHint.active    = false;
+    moveHint.blinkTimer = 0;
+    dashHint.active    = false;
+    dashHint.shown     = false;
+    dashHint.blinkTimer = 0;
+    teleHint.active    = false;
+    teleHint.shown     = false;
+    teleHint.blinkTimer = 0;
+    thornMonologue.shown = false;
+    teleMonologue.shown  = false;
+    teleAfterMonologue.shown = false;
+
+    // 전투 튜토리얼 리셋
+    combatTutorial.dialogueShown = false;
+    combatTutorial.hintActive    = false;
+    combatTutorial.hintShown     = false;
+    combatTutorial.blinkTimer    = 0;
+    combatTutorial.cutPhase      = 'idle';
+    combatTutorial.cutTimer      = 0;
+    combatTutorial.cutTriggered  = false;
+    combatTutorial.killMonologueDone = false;
+
+    // 맵2 진입 시 영구 플래그에서 상태 복원 (이미 발생한 이벤트는 재발동 안 함)
+    if (mapIndex === 2) {
+        tutHint.shown            = map2Events.tutHintShown;
+        moveHint.active          = map2Events.moveHintActive;
+        dashHint.shown           = map2Events.dashHintShown;
+        teleHint.shown           = map2Events.teleHintShown;
+        thornMonologue.shown     = map2Events.thornMonologueShown;
+        teleMonologue.shown      = map2Events.teleMonologueShown;
+        teleAfterMonologue.shown = map2Events.teleAfterMonologueShown;
+        combatTutorial.dialogueShown     = map2Events.dialogueShown;
+        combatTutorial.cutTriggered      = map2Events.cutTriggered;
+        combatTutorial.killMonologueDone = map2Events.killMonologueDone;
+        // 컷신이 이미 발동됐으면 done 상태로 복원
+        if (map2Events.cutTriggered) {
+            combatTutorial.cutPhase = 'done';
+        }
+    }
 
     // 맵 진입 이벤트 실행
     if (map.onEnter) map.onEnter();
@@ -497,6 +750,11 @@ function update() {
     updateDialogue();
     updateAfterimages();
     if (player.isDashing) createAfterimage();
+
+    // 튜토리얼 인트로 연출 업데이트 (항상 실행)
+    updateTutorialIntro();
+    // 전투 컷신 업데이트 (항상 실행 — SCALE·카메라 제어)
+    updateCombatCutscene();
 
     if (mapTransition.active) {
         updateMapTransition();
@@ -512,8 +770,87 @@ function update() {
         return;
     }
 
+    // 전투 컷신 freeze/zoomToEnemy/hold/zoomBack 중 — 플레이어 입력·이동 차단
+    const _cutActive = combatTutorial.cutPhase === 'freeze'      ||
+                       combatTutorial.cutPhase === 'zoomToEnemy' ||
+                       combatTutorial.cutPhase === 'hold'        ||
+                       combatTutorial.cutPhase === 'zoomBack';
+    if (_cutActive) {
+        player.dx          = 0;
+        player.isAttacking = false;
+        player.attackTimer = 0;
+        player.dy += player.gravity;
+        if (player.dy > 20) player.dy = 20;
+        player.y += player.dy;
+        player.grounded = false;
+        platforms.forEach(plat => {
+            const type = plat.type || 'platform';
+            if (type === 'solid' || type === 'platform' || type === 'barrier' || type === 'log') {
+                if (player.x + player.width  > plat.x &&
+                    player.x                 < plat.x + plat.width &&
+                    player.y + player.height >= plat.y &&
+                    player.y + player.height <= plat.y + 20 &&
+                    player.dy >= 0) {
+                    if (type !== 'platform' || !player.isDescending) {
+                        player.y        = plat.y - player.height;
+                        player.dy       = 0;
+                        player.grounded = true;
+                        player.jumpCount = 0;
+                        player.jumpTimer = 0;
+                    }
+                }
+            }
+        });
+        player.state = player.grounded ? 'idle' : 'jump2';
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
     if (dialogue.active || tutorial.active) {
+        // 입력/이동/공격은 차단하되 중력과 지형 충돌은 그대로 처리
+        player.dx          = 0;
+        player.isAttacking = false;
+        player.attackTimer = 0;
+
+        // 중력
+        player.dy += player.gravity;
+        if (player.dy > 20) player.dy = 20;
+        player.y += player.dy;
+
+        // 지형 충돌 (착지 판정)
+        player.grounded = false;
+        platforms.forEach(plat => {
+            const type = plat.type || 'platform';
+            if (type === 'solid' || type === 'platform' || type === 'barrier' || type === 'log') {
+                if (player.x + player.width  > plat.x &&
+                    player.x                 < plat.x + plat.width &&
+                    player.y + player.height >= plat.y &&
+                    player.y + player.height <= plat.y + 20 &&
+                    player.dy >= 0) {
+                    if (type !== 'platform' || !player.isDescending) {
+                        player.y         = plat.y - player.height;
+                        player.dy        = 0;
+                        player.grounded  = true;
+                        player.jumpCount = 0;
+                        player.jumpTimer = 0;
+                    }
+                }
+            }
+        });
+
+        // 스프라이트: 공중이면 낙하, 바닥이면 idle
+        player.state = player.grounded ? 'idle' : 'jump2';
+
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
+    // 인트로 연출 중 — 물리/입력 차단 (대화창은 위에서 처리)
+    if (isIntroActive()) {
         player.dx = 0;
+        player.dy = 0;
         draw();
         requestAnimationFrame(update);
         return;
@@ -552,6 +889,8 @@ function update() {
     }
 
     // 6-2: 수평 이동
+    if (player.thornsPushTimer > 0) player.thornsPushTimer--;
+
     if (player.isDashing) {
         const dashDir = (player.direction === 'right' ? 1 : -1);
         player.dx = dashDir * player.dashSpeed;
@@ -559,10 +898,11 @@ function update() {
         if (keys.a) {
             player.dx = player.isAttacking ? -player.speed * 0.5 : -player.speed;
             player.direction = 'left';
-        } else if (keys.d) {
+        } else if (keys.d && player.thornsPushTimer <= 0) {
+            // 덩굴 튕김 직후에는 D키 오른쪽 이동 무시
             player.dx = player.isAttacking ? player.speed * 0.5 : player.speed;
             player.direction = 'right';
-        } else {
+        } else if (!keys.a) {
             player.dx *= player.friction;
             if (Math.abs(player.dx) < 0.5) player.dx = 0;
         }
@@ -631,6 +971,54 @@ function update() {
                 else if (player.dx < 0) player.x = plat.x + plat.width;
                 player.dx = 0;
             }
+        } else if (type === 'barrier' || type === 'log') {
+            // barrier/log: 위에서 착지 가능 + 좌우 벽처럼 막음
+            // ① 위에서 착지
+            if (player.x + player.width  > plat.x &&
+                player.x                 < plat.x + plat.width &&
+                player.y + player.height >= plat.y &&
+                player.y + player.height <= plat.y + 20 &&
+                player.dy >= 0) {
+                player.y        = plat.y - player.height;
+                player.dy       = 0;
+                player.grounded = true;
+                player.jumpCount = 0;
+                player.jumpTimer = 0;
+                player.hasAirAttacked = false;
+                player.isDescending   = false;
+            }
+            // ② 좌우 진입 차단 (발판 위에 서있는 경우는 제외: player.y+height > plat.y+20)
+            const overlapY = player.y + player.height > plat.y + 20 &&
+                             player.y < plat.y + plat.height;
+            if (overlapY) {
+                const overlapX = player.x + player.width > plat.x &&
+                                 player.x                < plat.x + plat.width;
+                if (overlapX) {
+                    const fromLeft  = (player.x + player.width) - plat.x;
+                    const fromRight = (plat.x + plat.width) - player.x;
+                    if (fromLeft < fromRight) {
+                        player.x  = plat.x - player.width;
+                    } else {
+                        player.x  = plat.x + plat.width;
+                    }
+                    player.dx = 0;
+                }
+            }
+        } else if (type === 'telewall') {
+            // telewall: 플레이어는 좌우 진입 차단, 투사체만 통과 가능
+            if (player.x + player.width  > plat.x &&
+                player.x                 < plat.x + plat.width &&
+                player.y + player.height > plat.y &&
+                player.y                 < plat.y + plat.height) {
+                const fromLeft  = (player.x + player.width) - plat.x;
+                const fromRight = (plat.x + plat.width) - player.x;
+                if (fromLeft < fromRight) {
+                    player.x = plat.x - player.width;
+                } else {
+                    player.x = plat.x + plat.width;
+                }
+                player.dx = 0;
+            }
         } else if (type === 'solid') {
             if (player.x + player.width  > plat.x &&
                 player.x                 < plat.x + plat.width &&
@@ -683,6 +1071,9 @@ function update() {
     // 6-9: 맵 전환 트리거 체크
     checkMapTransitions();
 
+    // 6-9-1: 튜토리얼 위치 트리거 힌트
+    updateTutHint();
+
     // 6-10: 카메라 및 경계
     if (player.x < 0) player.x = 0;
     if (player.x + player.width > world.width) player.x = world.width - player.width;
@@ -690,9 +1081,14 @@ function update() {
     const logicalH = canvas.height / SCALE;
 
     // 수평 카메라
-    camera.x = player.x - logicalW / 2 + player.width / 2;
-    if (camera.x < 0) camera.x = 0;
-    if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+    // 맵3: 너비가 화면 1개와 동일하므로 x 고정 (0)
+    if (currentMapIndex === 3) {
+        camera.x = 0;
+    } else {
+        camera.x = player.x - logicalW / 2 + player.width / 2;
+        if (camera.x < 0) camera.x = 0;
+        if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+    }
 
     // 수직 카메라 — 플레이어 중심이 화면 중앙에 오도록 부드럽게 추적
     const targetCamY = player.y - logicalH / 2 + player.height / 2;
@@ -784,23 +1180,216 @@ function checkPlayerAttackHit() {
     });
 }
 function checkSpikes() {
-    if (player.isInvincible) return;
     for (const spike of spikes) {
-        if (player.x + player.width  > spike.x &&
-            player.x                 < spike.x + spike.width &&
-            player.y + player.height > spike.y &&
-            player.y                 < spike.y + spike.height) {
-            player.hp              = Math.max(player.hp - spike.damage, 0);
-            player.dy              = -player.jumpForce * 0.8;
-            player.grounded        = false;
-            player.jumpCount       = 1;
-            player.isInvincible    = true;
-            player.invincibleTimer = 90;
-            break;
+        if (spike.isThorns) {
+            // ── 가시덩굴 처리 ──────────────────────────────────────
+            // 대시 중이면 완전 통과 (충돌 자체 없음)
+            if (player.isDashing) continue;
+
+            const inX = player.x + player.width > spike.x &&
+                        player.x                < spike.x + spike.width;
+            const inY = player.y + player.height > spike.y &&
+                        player.y                < spike.y + spike.height;
+
+            if (inX && inY) {
+                // 항상 덩굴 왼쪽 밖으로 밀어냄 (오른쪽에서 닿아도 동일)
+                player.x         = spike.x - player.width;
+                // D를 누르고 있어도 덮어쓰도록 강한 왼쪽 속도 고정 (위 튕김 없음)
+                player.dx             = -10;
+                player.direction      = 'left';
+                player.thornsPushTimer = 18;  // 약 0.3초간 오른쪽 이동 억제
+
+                // 무적 중이 아닐 때만 데미지
+                if (!player.isInvincible) {
+                    player.hp              = Math.max(player.hp - spike.damage, 0);
+                    player.isInvincible    = true;
+                    player.invincibleTimer = 90;
+                }
+            }
+        } else {
+            // ── 일반 가시 처리 ─────────────────────────────────────
+            if (player.isInvincible) continue;
+            if (player.x + player.width  > spike.x &&
+                player.x                 < spike.x + spike.width &&
+                player.y + player.height > spike.y &&
+                player.y                 < spike.y + spike.height) {
+                player.hp              = Math.max(player.hp - spike.damage, 0);
+                player.dy              = -player.jumpForce * 0.8;
+                player.grounded        = false;
+                player.jumpCount       = 1;
+                player.isInvincible    = true;
+                player.invincibleTimer = 90;
+                break;
+            }
         }
     }
 }
 // [SECTION 7] 렌더링 (Rendering)
+// ── 맵2 오른쪽 끝 절벽 배경 장식 ────────────────────────────────────
+// 역삼각형: 위(꼭대기)가 넓고 아래(바닥)로 갈수록 좁아짐
+// 빛 받는 면(밝음)과 그림자 면(어둠)의 색상 대비로 절벽 입체감 표현
+// 중간에 살짝 꺾이는 능선 포함, 윤곽은 각진 느낌의 완만한 꺾임
+function drawMap2CliffDecoration() {
+    const mapH = world.height;
+    const mapW = world.width;
+
+    // ── 절벽 윤곽 꼭짓점 (완전 직선, 각진 형태) ──────────────────────
+    const ptTop  = { x: 7300, y: 0    };  // 상단 왼쪽 끝
+    const ptKink = { x: 7520, y: 380  };  // 중간 꺾임 (돌출 모서리)
+    const ptBot  = { x: 7790, y: mapH };  // 하단
+
+    ctx.save();
+
+    // ① 빛 받는 면 (상단~꺾임 구간, 왼쪽 면) — 맵3 갈색 밝은 면
+    ctx.beginPath();
+    ctx.moveTo(ptTop.x,        ptTop.y);
+    ctx.lineTo(ptKink.x,       ptKink.y);
+    ctx.lineTo(ptKink.x + 160, ptKink.y);
+    ctx.lineTo(ptTop.x + 160,  ptTop.y);
+    ctx.closePath();
+    const lightFace = ctx.createLinearGradient(ptTop.x, 0, ptTop.x + 160, 0);
+    lightFace.addColorStop(0, '#c8a060');
+    lightFace.addColorStop(1, '#a07840');
+    ctx.fillStyle = lightFace;
+    ctx.fill();
+
+    // ② 그림자 면 (꺾임~하단 포함, 오른쪽 전체 채우기) — 맵3 갈색 어두운 면
+    ctx.beginPath();
+    ctx.moveTo(ptTop.x,  ptTop.y);
+    ctx.lineTo(ptKink.x, ptKink.y);
+    ctx.lineTo(ptBot.x,  ptBot.y);
+    ctx.lineTo(mapW,     mapH);
+    ctx.lineTo(mapW,     0);
+    ctx.closePath();
+    const shadowFace = ctx.createLinearGradient(ptTop.x, 0, mapW, 0);
+    shadowFace.addColorStop(0,    '#8a6038');
+    shadowFace.addColorStop(0.35, '#6a4828');
+    shadowFace.addColorStop(1,    '#3e2810');
+    ctx.fillStyle = shadowFace;
+    ctx.fill();
+
+    // ③ 꺾임 능선 — 빛/그림자 경계 밝은 선
+    ctx.beginPath();
+    ctx.moveTo(ptTop.x + 160, ptTop.y);
+    ctx.lineTo(ptKink.x,      ptKink.y);
+    ctx.strokeStyle = 'rgba(210,170,100,0.70)';
+    ctx.lineWidth   = 2.5;
+    ctx.lineJoin    = 'miter';
+    ctx.lineCap     = 'square';
+    ctx.stroke();
+
+    // ④ 왼쪽 윤곽 테두리 (완전 직선)
+    ctx.beginPath();
+    ctx.moveTo(ptTop.x,  ptTop.y);
+    ctx.lineTo(ptKink.x, ptKink.y);
+    ctx.lineTo(ptBot.x,  ptBot.y);
+    ctx.strokeStyle = '#2e1a08';
+    ctx.lineWidth   = 4;
+    ctx.lineJoin    = 'miter';
+    ctx.lineCap     = 'square';
+    ctx.stroke();
+
+    // ⑤ 윤곽 하이라이트 (테두리 오른쪽 얇은 밝은 선)
+    ctx.beginPath();
+    ctx.moveTo(ptTop.x + 3,  ptTop.y);
+    ctx.lineTo(ptKink.x + 3, ptKink.y);
+    ctx.lineTo(ptBot.x + 3,  ptBot.y);
+    ctx.strokeStyle = 'rgba(200,155,80,0.40)';
+    ctx.lineWidth   = 2;
+    ctx.lineJoin    = 'miter';
+    ctx.lineCap     = 'square';
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+// ── 맵3 절벽 벽면 바위 장식 ────────────────────────────────────────────
+// 벽을 정면으로 보는 구도 — 벽에 박혀있는 납작한 바위 덩어리들 (순수 장식)
+function drawMap3RockyBackground() {
+    const W = world.width;   // 1280
+    const H = world.height;  // 3200
+
+    ctx.save();
+
+    // 오른쪽 암벽 면 어두운 그라디언트 (깊이감)
+    const rightGrad = ctx.createLinearGradient(W - 350, 0, W, 0);
+    rightGrad.addColorStop(0,   'rgba(50,30,10,0)');
+    rightGrad.addColorStop(0.5, 'rgba(50,30,10,0.15)');
+    rightGrad.addColorStop(1,   'rgba(30,15,5,0.45)');
+    ctx.fillStyle = rightGrad;
+    ctx.fillRect(W - 350, 0, 350, H);
+
+    // ── 벽에 박힌 바위 클러스터 (2~3개씩 뭉쳐서 산개) ─────────────────
+    // 각 클러스터: 기준점 + 오프셋으로 2~3개 바위 배치
+    // 바위 형태: 각진 다각형 (4~6각, 불규칙)
+    const clusters = [
+        { cx: 130, cy:  320, members: [{ ox:   0, oy:  0, r: 18 }, { ox:  22, oy: -8, r: 14 }, { ox: -16, oy: 12, r: 12 }] },
+        { cx: 810, cy:  570, members: [{ ox:   0, oy:  0, r: 16 }, { ox:  20, oy:  6, r: 13 }] },
+        { cx: 290, cy:  940, members: [{ ox:   0, oy:  0, r: 20 }, { ox:  24, oy: -5, r: 15 }, { ox: -18, oy:  8, r: 11 }] },
+        { cx: 960, cy: 1240, members: [{ ox:   0, oy:  0, r: 15 }, { ox:  18, oy:  9, r: 12 }] },
+        { cx:  80, cy: 1580, members: [{ ox:   0, oy:  0, r: 17 }, { ox:  21, oy: -6, r: 13 }, { ox: -14, oy: 10, r: 10 }] },
+        { cx: 650, cy: 1870, members: [{ ox:   0, oy:  0, r: 19 }, { ox:  23, oy:  4, r: 14 }] },
+        { cx: 200, cy: 2230, members: [{ ox:   0, oy:  0, r: 16 }, { ox:  20, oy: -7, r: 12 }, { ox: -15, oy:  9, r: 11 }] },
+        { cx: 870, cy: 2510, members: [{ ox:   0, oy:  0, r: 18 }, { ox:  22, oy:  5, r: 13 }] },
+        { cx: 420, cy: 2800, members: [{ ox:   0, oy:  0, r: 20 }, { ox:  25, oy: -4, r: 14 }, { ox: -17, oy: 11, r: 12 }] },
+    ];
+
+    // 각진-동그란 다각형 그리기 (꼭짓점 수 n, 반경 r, 중심 cx/cy, 시드로 불규칙화)
+    function drawAngularRock(cx, cy, r, seed) {
+        const n = 6;   // 꼭짓점 수
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+            // 각 꼭짓점마다 반경을 seed 기반으로 약간씩 불규칙하게
+            const jitter = 0.72 + ((seed * (i + 3) * 17) % 100) / 180;
+            const angle  = (Math.PI * 2 / n) * i - Math.PI / 2;
+            const px = cx + Math.cos(angle) * r * jitter;
+            const py = cy + Math.sin(angle) * r * jitter * 0.78;  // 세로 약간 납작
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+    }
+
+    clusters.forEach((cl, ci) => {
+        cl.members.forEach((m, mi) => {
+            const cx = cl.cx + m.ox;
+            const cy = cl.cy + m.oy;
+            const r  = m.r;
+            const seed = ci * 31 + mi * 7;
+
+            // 그림자
+            ctx.save();
+            ctx.translate(3, 5);
+            drawAngularRock(cx, cy, r, seed);
+            ctx.fillStyle = 'rgba(15,8,2,0.30)';
+            ctx.fill();
+            ctx.restore();
+
+            // 본체
+            drawAngularRock(cx, cy, r, seed);
+            const g = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.25, r * 0.05, cx, cy, r);
+            g.addColorStop(0,   '#4a3822');
+            g.addColorStop(0.7, '#2e2010');
+            g.addColorStop(1,   '#150e05');
+            ctx.fillStyle = g;
+            ctx.fill();
+
+            // 윤곽
+            drawAngularRock(cx, cy, r, seed);
+            ctx.strokeStyle = 'rgba(10,5,1,0.85)';
+            ctx.lineWidth   = 1.5;
+            ctx.stroke();
+
+            // 하이라이트 (왼쪽 위 작은 밝은 점)
+            ctx.beginPath();
+            ctx.ellipse(cx - r * 0.22, cy - r * 0.28, r * 0.28, r * 0.16, -0.4, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(90,65,38,0.50)';
+            ctx.fill();
+        });
+    });
+
+    ctx.restore();
+}
+
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
@@ -808,26 +1397,334 @@ function draw() {
     ctx.translate(-camera.x, -cameraY);
 
     // 7-1: 배경
-    ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
-    ctx.fillRect(0, 0, world.width, world.height);
+    if (currentMapIndex === 2 && sprites['BG_FOREST'] && sprites['BG_FOREST'].naturalWidth > 0) {
+        const bgImg  = sprites['BG_FOREST'];
+        const bgImg2 = sprites['BG_FOREST2'] && sprites['BG_FOREST2'].naturalWidth > 0 ? sprites['BG_FOREST2'] : bgImg;
+        const imgW  = bgImg.naturalWidth;
+        const imgH  = bgImg.naturalHeight;
+        // 맵 세로(world.height=800)에 딱 맞게 스케일, 가로는 비율 유지
+        const scale = world.height / imgH;
+        const tileW = imgW * scale;
+        const tileH = world.height;
+        const bgOffset = -tileW * 0.3;   // 전체 배경을 왼쪽으로 0.3장 이동
+        const startX = Math.floor((camera.x - bgOffset) / tileW) * tileW + bgOffset;
+        // 마지막 타일 X 계산 (world.width 이전 마지막 반복)
+        const lastTileX = Math.floor((world.width - 1 - bgOffset) / tileW) * tileW + bgOffset;
+        for (let tx = startX; tx < world.width; tx += tileW) {
+            const useImg = (tx === lastTileX) ? bgImg2 : bgImg;
+            ctx.drawImage(useImg, tx, 0, tileW, tileH);
+        }
+    } else {
+        ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+        ctx.fillRect(0, 0, world.width, world.height);
+    }
+
+    // 7-1b: 맵3 절벽 배경 이미지 (세로 루프)
+    if (currentMapIndex === 3 && sprites['BG_CLIFF'] && sprites['BG_CLIFF'].naturalWidth > 0) {
+        const bgImg = sprites['BG_CLIFF'];
+        const imgW  = bgImg.naturalWidth;
+        const imgH  = bgImg.naturalHeight;
+        // 맵 가로(world.width=1280)에 딱 맞게 스케일, 세로는 비율 유지
+        const scale = world.width / imgW;
+        const tileW = world.width;
+        const tileH = imgH * scale;
+        const startY = Math.floor(cameraY / tileH) * tileH;
+        for (let ty = startY; ty < world.height; ty += tileH) {
+            ctx.drawImage(bgImg, 0, ty, tileW, tileH);
+        }
+    } else if (currentMapIndex === 3) {
+        ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+        ctx.fillRect(0, 0, world.width, world.height);
+    }
+
+// ── 잘린 나무 그루터기 렌더링 (barrier / log 공용) ──────────────────
+function drawStump(ctx, x, y, w, h) {
+    const cx  = x + w / 2;
+    const base = y + h;   // 판정 하단 = 지면
+
+    // 원기둥 치수 — rx 기준으로 모든 폭/위치 통일
+    const rx  = w * 0.36;          // 가로 반경
+    const ry  = Math.max(h * 0.09, 9); // 세로 반경 (상·하단 타원 공용)
+    const topCY  = y + ry;         // 상단 타원 중심 y (타원이 판정 상단에 걸쳐 앉음)
+    const botCY  = base;           // 하단 타원 중심 y (판정 하단)
+
+    // ── ① 몸통: 좌우 직선 + 상·하단 타원 하반부·상반부로 닫히는 패스 ──
+    // 좌우 벽은 타원 중심 y 기준으로 수직선
+    ctx.save();
+    ctx.beginPath();
+    // 상단 타원 — 왼쪽 끝(π)에서 오른쪽 끝(0)으로 윗쪽 반호
+    ctx.ellipse(cx, topCY, rx, ry, 0, Math.PI, 0, false); // 위 반호 (left→right)
+    // 오른쪽 수직선: 상단 타원 오른쪽 끝 → 하단 타원 오른쪽 끝
+    ctx.lineTo(cx + rx, botCY);
+    // 하단 타원 아랫쪽 반호 (right→left)
+    ctx.ellipse(cx, botCY, rx, ry, 0, 0, Math.PI, false);
+    // 왼쪽 수직선: 하단 타원 왼쪽 끝 → 상단 타원 왼쪽 끝
+    ctx.lineTo(cx - rx, topCY);
+    ctx.closePath();
+
+    const gradBody = ctx.createLinearGradient(cx - rx, 0, cx + rx, 0);
+    gradBody.addColorStop(0,    '#2c1a0a');
+    gradBody.addColorStop(0.10, '#5a3318');
+    gradBody.addColorStop(0.32, '#8c5830');
+    gradBody.addColorStop(0.50, '#a86838');
+    gradBody.addColorStop(0.68, '#8c5830');
+    gradBody.addColorStop(0.90, '#5a3318');
+    gradBody.addColorStop(1,    '#2c1a0a');
+    ctx.fillStyle = gradBody;
+    ctx.fill();
+
+    // 세로 껍질 결 (클립)
+    ctx.clip();
+    [0.12, 0.25, 0.40, 0.50, 0.60, 0.75, 0.88].forEach((r, i) => {
+        const gx = (cx - rx) + rx * 2 * r;
+        ctx.strokeStyle = `rgba(0,0,0,${0.09 + (i % 3) * 0.04})`;
+        ctx.lineWidth   = 0.8 + (i % 3) * 0.7;
+        ctx.beginPath();
+        ctx.moveTo(gx + (r < 0.5 ? -2 : 2), topCY + ry * 0.3);
+        ctx.lineTo(gx, botCY - ry * 0.3);
+        ctx.stroke();
+    });
+
+    // 이끼 (왼쪽 측면 중간)
+    ctx.globalAlpha = 0.40;
+    [[0.10, 0.35, 6], [0.06, 0.52, 5], [0.14, 0.25, 4]].forEach(([rx2, ry2, rad]) => {
+        ctx.beginPath();
+        ctx.arc((cx - rx) + rx * 2 * rx2, topCY + (botCY - topCY) * ry2, rad, 0, Math.PI * 2);
+        ctx.fillStyle = '#3d6e22';
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // 측면 윤곽선
+    ctx.strokeStyle = 'rgba(18, 8, 2, 0.55)';
+    ctx.lineWidth   = 2.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // ── ② 하단 타원 — 위쪽 절반만 그려 바닥면 암시 ─────────────────
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, botCY, rx, ry, 0, Math.PI, 0, false); // 위 반호만
+    ctx.closePath();
+    ctx.fillStyle = '#4a2a10';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(18, 8, 2, 0.45)';
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // ── ③ 상단 단면 타원 (나이테 + 수심) ────────────────────────────
+    // 껍질 외곽 (몸통 그라디언트와 동일 색으로 경계 없애기)
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, topCY, rx, ry, 0, 0, Math.PI * 2);
+    const gradBark = ctx.createLinearGradient(cx - rx, 0, cx + rx, 0);
+    gradBark.addColorStop(0,    '#2c1a0a');
+    gradBark.addColorStop(0.10, '#5a3318');
+    gradBark.addColorStop(0.32, '#8c5830');
+    gradBark.addColorStop(0.50, '#a86838');
+    gradBark.addColorStop(0.68, '#8c5830');
+    gradBark.addColorStop(0.90, '#5a3318');
+    gradBark.addColorStop(1,    '#2c1a0a');
+    ctx.fillStyle = gradBark;
+    ctx.fill();
+    ctx.restore();
+
+    // 단면 내부 (나이테)
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, topCY, rx * 0.86, ry * 0.86, 0, 0, Math.PI * 2);
+    const gradFace = ctx.createRadialGradient(
+        cx - rx * 0.18, topCY - ry * 0.25, 0,
+        cx, topCY, rx
+    );
+    gradFace.addColorStop(0,    '#f8cc80');
+    gradFace.addColorStop(0.35, '#d49858');
+    gradFace.addColorStop(0.70, '#b07038');
+    gradFace.addColorStop(1,    '#7a4820');
+    ctx.fillStyle = gradFace;
+    ctx.fill();
+
+    ctx.clip();
+    const ringCount = Math.max(2, Math.floor(rx / 6));
+    for (let i = 1; i <= ringCount; i++) {
+        const rt = i / (ringCount + 1);
+        ctx.beginPath();
+        ctx.ellipse(cx, topCY, rx * 0.86 * rt, ry * 0.86 * rt, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(85, 40, 12, ${0.13 + rt * 0.20})`;
+        ctx.lineWidth   = 0.9;
+        ctx.stroke();
+    }
+    // 수심
+    ctx.beginPath();
+    ctx.ellipse(cx, topCY, Math.max(2, rx * 0.07), Math.max(1, ry * 0.18), 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(60, 22, 5, 0.85)';
+    ctx.fill();
+    ctx.restore();
+
+    // 단면 테두리
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, topCY, rx * 0.86, ry * 0.86, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(45, 18, 4, 0.50)';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+    ctx.restore();
+}
 
     // 7-2: 플랫폼
     platforms.forEach(plat => {
-        ctx.fillStyle = (plat.type === 'solid' || plat.type === 'wall') ? '#654321' : '#4A4A4A';
-        ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+        if (plat.type === 'barrier' || plat.type === 'log') {
+            drawStump(ctx, plat.x, plat.y, plat.width, plat.height);
+        } else if (plat.type === 'telewall') {
+            // telewall: 투사체만 통과하는 에너지 장벽 — 보라/청보라 반투명
+            const tw = plat.width;
+            const th = plat.height;
+            const tx = plat.x;
+            const ty = plat.y;
+
+            // 배경 채우기
+            ctx.fillStyle = 'rgba(80, 40, 160, 0.55)';
+            ctx.fillRect(tx, ty, tw, th);
+
+            // 세로 줄무늬 에너지 라인
+            const lineCount = Math.max(2, Math.floor(tw / 10));
+            for (let li = 0; li < lineCount; li++) {
+                const lx = tx + (tw / (lineCount + 1)) * (li + 1);
+                const pulse = Math.sin(Date.now() / 300 + li * 1.5) * 0.25 + 0.75;
+                ctx.strokeStyle = `rgba(180, 120, 255, ${pulse * 0.9})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(lx, ty);
+                ctx.lineTo(lx, ty + th);
+                ctx.stroke();
+            }
+
+            // 테두리 — 밝은 보라
+            ctx.strokeStyle = 'rgba(200, 150, 255, 0.85)';
+            ctx.lineWidth   = 2;
+            ctx.strokeRect(tx, ty, tw, th);
+
+            // 투사체 통과 아이콘 (중앙에 작은 원 힌트)
+            const midY = ty + th / 2;
+            ctx.beginPath();
+            ctx.arc(tx + tw / 2, midY, 10, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(220, 180, 255, 0.4)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(220, 180, 255, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        } else {
+            // 맵3: 절벽 바위 스타일
+            if (currentMapIndex === 3) {
+                if (plat.type === 'solid') {
+                    // 바닥 — 두꺼운 암반 (격자 없음)
+                    ctx.fillStyle = '#7a5030';
+                    ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+                    ctx.fillStyle = '#9a6840';
+                    ctx.fillRect(plat.x, plat.y, plat.width, 10);
+                    ctx.fillStyle = '#5a3820';
+                    ctx.fillRect(plat.x, plat.y + 10, plat.width, 4);
+                } else if (plat.type === 'wall') {
+                    ctx.fillStyle = '#7a5030';
+                    ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+                } else {
+                    // platform — 돌출된 바위 발판
+                    ctx.fillStyle = '#8a6040';
+                    ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+                    // 상단 밝은 면 (빛 받는 표면)
+                    ctx.fillStyle = '#b08058';
+                    ctx.fillRect(plat.x, plat.y, plat.width, 6);
+                    // 하단 그림자
+                    ctx.fillStyle = '#5a3820';
+                    ctx.fillRect(plat.x, plat.y + plat.height - 5, plat.width, 5);
+                    // 왼쪽 측면 (돌출 느낌)
+                    ctx.fillStyle = '#6a4828';
+                    ctx.fillRect(plat.x, plat.y + 6, 6, plat.height - 11);
+                    // 울퉁불퉁 돌 질감 (작은 돌기)
+                    ctx.fillStyle = 'rgba(180,130,80,0.5)';
+                    for (let bx2 = plat.x + 15; bx2 < plat.x + plat.width - 10; bx2 += 28) {
+                        ctx.fillRect(bx2, plat.y + 2, 8, 3);
+                    }
+                }
+            } else {
+                ctx.fillStyle = (plat.type === 'solid' || plat.type === 'wall') ? '#654321' : '#4A4A4A';
+                ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+            }
+        }
     });
 
-    // 7-3: 가시
+    // 7-3: 가시 / 가시덩굴
     spikes.forEach(spike => {
+        if (spike.isThorns) {
+            // 가시덩굴: 세로로 긴 덩굴 그래픽
+            const sw = spike.width;
+            const sx = spike.x;
+            const sy = spike.y;
+            const sh = spike.height;
+
+            // 줄기 배경 (어두운 녹색)
+            ctx.fillStyle = '#1a3a10';
+            ctx.fillRect(sx, sy, sw, sh);
+
+            // 줄기 중앙 라인들
+            const stemCount = Math.max(2, Math.floor(sw / 18));
+            for (let s = 0; s < stemCount; s++) {
+                const stemX = sx + (sw / (stemCount + 1)) * (s + 1);
+                ctx.strokeStyle = '#2d5a1a';
+                ctx.lineWidth   = 3;
+                ctx.beginPath();
+                ctx.moveTo(stemX, sy + sh);
+                ctx.bezierCurveTo(
+                    stemX + 8,  sy + sh * 0.7,
+                    stemX - 8,  sy + sh * 0.4,
+                    stemX,      sy
+                );
+                ctx.stroke();
+            }
+
+            // 가시 삼각형 (좌우 교대로)
+            const thornSpacing = 22;
+            const thornH = 9;
+            const thornW = 7;
+            for (let ty2 = sy + 10; ty2 < sy + sh - 10; ty2 += thornSpacing) {
+                const side = Math.floor((ty2 - sy) / thornSpacing) % 2 === 0 ? -1 : 1;
+                const tx   = sx + sw / 2 + side * (sw * 0.15);
+                ctx.fillStyle = '#c8c060';
+                ctx.beginPath();
+                ctx.moveTo(tx,               ty2);
+                ctx.lineTo(tx + side * thornW, ty2 + thornH / 2);
+                ctx.lineTo(tx,               ty2 + thornH);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#8a8030';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+            }
+
+            // 좌우 테두리 선
+            ctx.strokeStyle = 'rgba(180,220,80,0.4)';
+            ctx.lineWidth   = 1.5;
+            ctx.strokeRect(sx, sy, sw, sh);
+
+            // 대시 시 살짝 반짝임 (player.isDashing && 범위 근처)
+            const nearX = Math.abs(player.x + player.width / 2 - (sx + sw / 2)) < 150;
+            if (player.isDashing && nearX) {
+                ctx.fillStyle = 'rgba(120,255,120,0.08)';
+                ctx.fillRect(sx, sy, sw, sh);
+            }
+            return;
+        }
+        // 일반 가시
         const col  = 6;
         const tipW = spike.width / col;
         for (let i = 0; i < col; i++) {
-            const sx = spike.x + i * tipW;
+            const sx2 = spike.x + i * tipW;
             ctx.fillStyle = '#888888';
             ctx.beginPath();
-            ctx.moveTo(sx,           spike.y + spike.height);
-            ctx.lineTo(sx + tipW,    spike.y + spike.height);
-            ctx.lineTo(sx + tipW/2,  spike.y);
+            ctx.moveTo(sx2,          spike.y + spike.height);
+            ctx.lineTo(sx2 + tipW,   spike.y + spike.height);
+            ctx.lineTo(sx2 + tipW/2, spike.y);
             ctx.closePath();
             ctx.fill();
             ctx.strokeStyle = '#555';
@@ -877,7 +1774,14 @@ function draw() {
 
     // 7-6: 플레이어 스프라이트
     let currentKey = 'PLAYER_STAND';
-    if (player.isAttacking) {
+    const introKey = getIntroPlayerKey();
+    if (introKey) {
+        // 인트로 연출 중: 스프라이트 고정, 방향은 왼쪽(쓰러진 방향)
+        currentKey = introKey;
+        if (introSeq.phase === 'fall' || introSeq.phase === 'hint') {
+            player.direction = 'left';  // 쓰러진 채로 왼쪽 방향
+        }
+    } else if (player.isAttacking) {
         if (player.grounded) {
             currentKey = (player.attackFrame === 1) ? 'ATTACK1' : 'ATTACK2';
         } else {
@@ -923,8 +1827,31 @@ function draw() {
     } else if (player.state === 'walk') {
         drawWidth *= 1.3;
     }
-    const drawX = player.x - (drawWidth  - player.width)  / 2;
-    const drawY = (player.y + player.height) - drawHeight;
+
+    // ── 인트로 전용 스프라이트 크기 오버라이드 ──────────────────────
+    // fall_down: 1415×429 (비율 3.298)
+    //   - 이미지 하단 여백이 있어 실제 칼/발 끝은 이미지 높이의 약 88% 지점
+    //   - drawHeight를 hitbox 높이의 55%로 줄여서 자연스러운 크기로
+    // wake_up:   398×329 (비율 1.21)
+    if (currentKey === 'PLAYER_FALL_DOWN') {
+        drawHeight = player.height * 0.55;
+        drawWidth  = drawHeight * 3.298;
+    } else if (currentKey === 'PLAYER_WAKE_UP') {
+        drawHeight = player.height * 1.1;
+        drawWidth  = drawHeight * 1.21;
+    }
+
+    // drawX/drawY: 기본은 hitbox 하단 기준 (발 맞춤)
+    let drawX = player.x - (drawWidth  - player.width)  / 2;
+    let drawY = (player.y + player.height) - drawHeight;
+
+    if (currentKey === 'PLAYER_FALL_DOWN') {
+        // imgBottomGap: 양수면 이미지가 위로 뜸 → 음수로 더 내림
+        const imgBottomGap = drawHeight * 0.18;   // 0.03 → 0.18 (더 아래로)
+        drawY = (player.y + player.height) - drawHeight + imgBottomGap;
+        // drawWidth * X 를 키울수록 drawX가 왼쪽으로 이동 → 오른쪽 치우침 해소
+        drawX = player.x + player.width / 2 - drawWidth * 0.35;
+    }
 
     // 페이즈별 렌더링 제어
     let blinkVisible;
@@ -969,6 +1896,12 @@ function draw() {
     if (typeof drawUI       === 'function') drawUI();
     if (typeof drawDialogue === 'function') drawDialogue();
     if (typeof drawTutorial === 'function') drawTutorial();
+    drawIntroHint();
+    drawMoveHint();
+    drawTutHint();
+    drawDashHint();
+    drawTeleHint();
+    drawCombatTutHint();
     drawUltimate();
     ctx.restore();
 
@@ -1033,8 +1966,8 @@ const projectile = {
     checkCollision() {
         for (const plat of platforms) {
             const type = plat.type || 'platform';
-            // platform 타입은 투사체 통과
-            if (type === 'platform') continue;
+            // platform, telewall 타입은 투사체 통과
+            if (type === 'platform' || type === 'telewall') continue;
 
             const overlapX = this.x + this.width  > plat.x &&
                              this.x                < plat.x + plat.width;
@@ -1123,6 +2056,8 @@ function startDash() {
 }
 
 function handleEKey() {
+    // 대화 중엔 투사체 발사 및 순간이동 차단
+    if (dialogue.active || tutorial.active) return;
     const now = Date.now();
     if (projectile.active) {
         // 출발~도착 사이에 잔상 스프라이트 생성
@@ -1257,6 +2192,46 @@ function updateDialogue() {
 function drawDialogue() {
     if (!dialogue.active) return;
 
+    // ══ 생각(thought) 전용 렌더링 ══════════════════════════════════════
+    if (dialogue.speakerType === 'thought') {
+        const boxH = 300;
+        const boxY = LOGICAL_H - boxH;
+        const boxW = LOGICAL_W;
+
+        // 대화창 배경 (일반과 동일)
+        ctx.fillStyle = 'rgba(8, 8, 18, 0.92)';
+        ctx.fillRect(0, boxY, boxW, boxH);
+
+        ctx.strokeStyle = 'rgba(160, 130, 255, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, boxY);
+        ctx.lineTo(boxW, boxY);
+        ctx.stroke();
+
+        // 텍스트 — 중앙 정렬
+        const textY = boxY + 80;
+        ctx.fillStyle = 'rgba(235, 230, 245, 1)';
+        ctx.font = `42px ${DIALOGUE_FONT}`;
+        ctx.textAlign = 'center';
+        wrapTextCenter(ctx, dialogue.displayText, LOGICAL_W / 2, textY, LOGICAL_W - 400, 64);
+        ctx.textAlign = 'left';
+
+        // 진행 표시 ▼ (일반과 동일)
+        if (dialogue.isFinished) {
+            const blink = Math.floor(Date.now() / 500) % 2 === 0;
+            if (blink) {
+                ctx.fillStyle = 'rgba(200, 175, 255, 0.9)';
+                ctx.font = '19px monospace';
+                ctx.textAlign = 'right';
+                ctx.fillText('▼', boxW - 45, LOGICAL_H - 30);
+                ctx.textAlign = 'left';
+            }
+        }
+        return;
+    }
+
+    // ══ 일반 대화 렌더링 ════════════════════════════════════════════════
     const boxH = 300;
     const boxY = LOGICAL_H - boxH;
     const boxW = LOGICAL_W;
@@ -1347,9 +2322,8 @@ function drawDialogue() {
     }
 
     // --- 대사 텍스트 ---
-    // 스탠딩 일러스트와 무관하게 고정 여백으로 시작, 충분히 넓은 영역 확보
-    const textMarginL = 300;   // 왼쪽 여백 (스탠딩 하단이 좁아도 텍스트는 여기서 시작)
-    const textMarginR = isSolo ? 200 : 680;  // 오른쪽 여백 (2인 대화 시 오른쪽 스탠딩 회피)
+    const textMarginL = 300;
+    const textMarginR = isSolo ? 200 : 680;
     const textX    = textMarginL;
     const textMaxW = LOGICAL_W - textMarginL - textMarginR;
     const textY    = boxY + 80;
@@ -1388,6 +2362,24 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     ctx.fillText(line, x, currentY);
 }
 
+// 중앙 정렬 wrapText (thought 타입용)
+function wrapTextCenter(ctx, text, cx, y, maxWidth, lineHeight) {
+    const chars = text.split('');
+    let line = '';
+    let currentY = y;
+    for (const char of chars) {
+        const test = line + char;
+        if (ctx.measureText(test).width > maxWidth) {
+            ctx.fillText(line, cx, currentY);
+            line = char;
+            currentY += lineHeight;
+        } else {
+            line = test;
+        }
+    }
+    ctx.fillText(line, cx, currentY);
+}
+
 // [SECTION 12] 맵 전환 시스템 (Map Transition)
 const mapTransition = {
     active: false,
@@ -1415,6 +2407,15 @@ function checkMapTransitions() {
             // requireClear가 있는 출입구: 맵 클리어 전엔 이동 불가
             if (tr.requireClear && !isMapCleared(currentMapIndex)) break;
 
+            // requireTutorialKill: 튜토리얼 enemy1을 처치해야만 통과 가능
+            if (tr.requireTutorialKill) {
+                // 영구 클리어 플래그 우선 확인 (맵 재진입 후 enemy 없어도 안전)
+                if (!map2Events.killMonologueDone) {
+                    const tutEnemy = enemies.find(e => e.isTutorialEnemy);
+                    if (tutEnemy) break;   // 아직 살아있으면 차단
+                }
+            }
+
             mapTransition.active = true;
             mapTransition.phase  = 'fadeOut';
             mapTransition.alpha  = 0;
@@ -1431,44 +2432,38 @@ function drawMapTransitionDoors() {
     if (!map.transitions) return;
 
     map.transitions.forEach(tr => {
-        if (!tr.requireClear) return;
+        const hasClearReq   = !!tr.requireClear;
+        const hasTutKillReq = !!tr.requireTutorialKill;
 
-        const cleared = isMapCleared(currentMapIndex);
-        const barW    = tr.width;
-        const barH    = tr.height;
+        let cleared;
+        if (hasTutKillReq) {
+            // 영구 클리어 플래그 우선 (재진입 후에도 열림 유지)
+            cleared = map2Events.killMonologueDone || !enemies.find(e => e.isTutorialEnemy);
+        } else if (hasClearReq) {
+            cleared = isMapCleared(currentMapIndex);
+        } else {
+            // 조건 없는 통로 — 항상 열림
+            cleared = true;
+        }
+
+        const barW = tr.width;
+        const barH = tr.height;
 
         ctx.save();
 
         if (!cleared) {
-            // ── 잠김: 붉은 반투명 블로킹 + 자물쇠 아이콘 ──
+            // ── 잠김: 붉은 반투명 블로킹 ──
             ctx.fillStyle = 'rgba(200, 30, 30, 0.35)';
             ctx.fillRect(tr.x, tr.y, barW, barH);
 
-            // 테두리 점선
             ctx.strokeStyle = 'rgba(255, 80, 80, 0.9)';
             ctx.lineWidth   = 2.5;
             ctx.setLineDash([6, 4]);
             ctx.strokeRect(tr.x, tr.y, barW, barH);
             ctx.setLineDash([]);
 
-            // 자물쇠 기호
-            const cx = tr.x + barW / 2;
-            const cy = tr.y + barH / 2;
-            ctx.fillStyle   = 'rgba(255,255,255,0.85)';
-            ctx.font        = 'bold 22px sans-serif';
-            ctx.textAlign   = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🔒', cx, cy);
-
-            // "적 처치 필요" 텍스트
-            ctx.font      = 'bold 11px sans-serif';
-            ctx.fillStyle = 'rgba(255,200,200,0.95)';
-            ctx.fillText('적 처치 필요', cx, cy + 22);
-            ctx.textBaseline = 'alphabetic';
-            ctx.textAlign    = 'left';
-
         } else {
-            // ── 열림: 초록 반짝이는 테두리만 ──
+            // ── 열림: 초록 반짝이는 테두리 ──
             const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
             ctx.strokeStyle = `rgba(80, 255, 120, ${0.55 + 0.35 * pulse})`;
             ctx.lineWidth   = 3;
@@ -1476,16 +2471,6 @@ function drawMapTransitionDoors() {
 
             ctx.fillStyle = `rgba(80, 255, 120, ${0.08 + 0.07 * pulse})`;
             ctx.fillRect(tr.x, tr.y, barW, barH);
-
-            const cx = tr.x + barW / 2;
-            const cy = tr.y + barH / 2;
-            ctx.fillStyle    = `rgba(180,255,200,${0.7 + 0.3 * pulse})`;
-            ctx.font         = 'bold 20px sans-serif';
-            ctx.textAlign    = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🔓', cx, cy);
-            ctx.textBaseline = 'alphabetic';
-            ctx.textAlign    = 'left';
         }
 
         ctx.restore();
@@ -1532,6 +2517,9 @@ function updateMapTransition() {
 
 // [SECTION 13] UI (HUD)
 function drawUI() {
+    // 인트로 연출 중엔 HUD 숨김
+    if (isIntroActive()) return;
+
     const barX    = 40;
     const barY    = 50;
     const barW    = 570;
@@ -1923,7 +2911,7 @@ const ENEMY_TYPES = {
     }
 };
 
-function createEnemy(type, x, y) {
+function createEnemy(type, x, y, opts) {
     const def = ENEMY_TYPES[type];
     const base = {
         type,
@@ -1956,6 +2944,8 @@ function createEnemy(type, x, y) {
         invincibleTimer:  0,
         deadTimer:        0,
         isAggro:          false,
+        isTutorialEnemy:  !!(opts && opts.isTutorialEnemy),
+        tutDialogueDone:  false,   // 대화 완료 전까지 행동 잠금
 
         takeDamage(dmg) {
             if (this.isInvincible || this.isDead) return;
@@ -2026,6 +3016,11 @@ function updateEnemies() {
         const e = enemies[i];
 
         if (e.isDead) {
+            // 튜토리얼 enemy1은 깜빡임 없이 즉시 제거
+            if (e.isTutorialEnemy) {
+                enemies.splice(i, 1);
+                continue;
+            }
             e.deadTimer++;
             if (e.deadTimer > 40) enemies.splice(i, 1);
             continue;
@@ -2051,6 +3046,77 @@ function updateEnemies() {
 
         // ── enemy1 ───────────────────────────────────────────────
         if (e.type === 'enemy1') {
+            // ── 튜토리얼 전용 enemy1: 대화 전 완전 정지, 대화 후 영구 어그로 ──
+            if (e.isTutorialEnemy) {
+                if (!e.tutDialogueDone) {
+                    // 대화 전: 제자리 대기 (배회·공격 없음)
+                    e.dx    = 0;
+                    e.state = 'idle';
+                    e.direction = (player.x + player.width / 2 < e.x + e.width / 2) ? 'left' : 'right';
+
+                    // 접근 감지 → 대화 발동 (컷신 완전 종료 후에만)
+                    if (!combatTutorial.dialogueShown &&
+                        combatTutorial.cutPhase === 'done' &&
+                        Math.abs(distX) < combatTutorial.triggerDistX) {
+                        combatTutorial.dialogueShown = true;
+                        map2Events.dialogueShown     = true;
+                        dialogue.active      = true;
+                        dialogue.cast        = ['STORY1', 'ENEMY1_STORY'];
+                        dialogue.lines       = [
+                            { speaker: '???', text: '저기, 물어볼 것이 있습..',               speakerType: 'player', illustKey: 'STORY1' },
+                            { speaker: '',     text: '말이 채 끝나기도 전에, 나를 발견한 그자가 소스라치며 놀란다.', speakerType: 'thought',  illustKey: '' },
+                            { speaker: '???',    text: '사, 살아 있었다고?',              speakerType: 'npc',    illustKey: 'ENEMY1_STORY' },
+                            { speaker: '???',    text: '하필 혼자 있을 때..! 도, 도망쳐야...', speakerType: 'npc',    illustKey: 'ENEMY1_STORY' },
+                            { speaker: '',     text: '그렇게 말하며 뒤돌아섰던 그자가 잠시 멈칫하더니 이윽고 다시 나를 바라본다.', speakerType: 'thought',  illustKey: '' },
+                            { speaker: '???',    text: '하, 하지만, 지금 상태라면.', speakerType: 'npc',    illustKey: 'ENEMY1_STORY' },
+                            { speaker: '',     text: '알 수 없는 소리를 중얼거리던 그자는, 들고있던 무기를 떨리는 손으로 내게 겨눈다.', speakerType: 'thought',  illustKey: '' },
+                            { speaker: '???', text: '무언가 오해가 있으신 거 같습니다. 저는..',               speakerType: 'player', illustKey: 'STORY1' },
+                            { speaker: '',     text: '하지만 그는 더이상 말을 제대로 들을 상태가 아닌 것 같았다.', speakerType: 'thought',  illustKey: '' },
+                            { speaker: '???', text: '허... 싸울 수 밖에 없나.',               speakerType: 'player', illustKey: 'STORY1' },
+                        ];
+                        dialogue.currentLine = 0;
+                        dialogue.speakerName = dialogue.lines[0].speaker;
+                        dialogue.speakerType = dialogue.lines[0].speakerType;
+                        dialogue.illustKey   = dialogue.lines[0].illustKey;
+                        dialogue.displayText = '';
+                        dialogue.charIndex   = 0;
+                        dialogue.typingTimer = 0;
+                        dialogue.isFinished  = false;
+                    }
+
+                    // 대화가 끝났으면 잠금 해제 + 공격 힌트 표시
+                    if (combatTutorial.dialogueShown && !dialogue.active) {
+                        e.tutDialogueDone = true;
+                        e.isAggro         = true;
+                        if (!combatTutorial.hintShown) {
+                            combatTutorial.hintActive = true;
+                            combatTutorial.hintShown  = true;
+                            combatTutorial.blinkTimer = 0;
+                        }
+                    }
+
+                    // 대화 전이므로 물리만 처리하고 AI 스킵
+                    e.dy += e.gravity;
+                    if (e.dy > 20) e.dy = 20;
+                    e.y += e.dy;
+                    e.grounded = false;
+                    platforms.forEach(plat => {
+                        const type = plat.type || 'platform';
+                        if (type === 'solid') {
+                            if (e.x + e.width  > plat.x &&
+                                e.x            < plat.x + plat.width &&
+                                e.y + e.height >= plat.y &&
+                                e.y + e.height <= plat.y + Math.max(20, e.dy + 1) &&
+                                e.dy >= 0) {
+                                e.y = plat.y - e.height; e.dy = 0; e.grounded = true;
+                            }
+                        }
+                    });
+                    continue;
+                }
+                // 대화 완료 후: 어그로 영구 유지, loseRange 무력화
+                e.isAggro = true;
+            }
             const inAttackRangeX = Math.abs(distX) < e.attackRange;
             const inAttackRangeY = Math.abs(distY) < e.height * 1.2;
             const canAttack      = inAttackRangeX && inAttackRangeY;
@@ -3100,6 +4166,840 @@ function drawUltimate() {
     ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
     ctx.restore();
 }
+// [SECTION 18] 튜토리얼 인트로 연출 (Tutorial Intro Sequence)
+//
+// 연출 흐름:
+//   'idle'      → 아무것도 안 함 (튜토리얼 맵 아닐 때)
+//   'fall'      → 플레이어가 쓰러진 상태(FALL_DOWN), 원거리 줌 + 서서히 클로즈업
+//   'hint'      → 클로즈업 완료 후 "Space - 점프" 힌트 표시
+//   'wakeup'    → Space 입력 시 WAKE_UP 스프라이트 잠시 표시
+//   'stand'     → STAND 스프라이트로 전환, 줌 서서히 복귀
+//   'monologue' → 줌 복귀 완료 후 독백 대화창 시작
+//   'done'      → 연출 완전 종료, 일반 플레이
+//
+const introSeq = {
+    phase: 'idle',
+
+    // 클로즈업 SCALE 범위
+    zoomFar:  BASE_SCALE * 1.3,   // 시작 줌 (살짝 먼 느낌)
+    zoomClose: BASE_SCALE * 1.75, // 최대 클로즈업 (2.0→1.75, 맵 밖 노출 방지)
+    zoomNormal: BASE_SCALE,       // 최종 일반 배율
+
+    zoomTimer:    0,
+    zoomDuration: 180,            // 원거리→클로즈업 프레임 수 (3초@60fps)
+
+    wakeupTimer:   0,
+    wakeupDuration: 40,           // WAKE_UP 유지 프레임
+    standTimer:    0,
+    standDuration: 30,            // STAND 고정 후 줌아웃 시작 딜레이
+
+    zoomOutTimer:    0,
+    zoomOutDuration: 90,          // 줌아웃 프레임 수
+
+    hintBlink: 0,                 // 힌트 텍스트 깜빡임 카운터
+
+    // 카메라 스냅 기준점 (wakeup→stand 전환 시 저장)
+    zoomOutStartScale: BASE_SCALE,
+    zoomOutCamStartX: 0,
+    zoomOutCamStartY: 0,
+};
+
+function startTutorialIntro() {
+    // 이미 인트로를 플레이한 적이 있으면 건너뜀
+    if (map2Events.introPlayed) {
+        introSeq.phase = 'done';
+        moveHint.active = map2Events.moveHintActive;
+        return;
+    }
+    map2Events.introPlayed = true;
+
+    introSeq.phase      = 'fall';
+    introSeq.zoomTimer  = 0;
+    introSeq.hintBlink  = 0;
+    SCALE = introSeq.zoomFar;
+
+    // 카메라를 플레이어에 즉시 스냅
+    _snapCameraToPlayer();
+}
+
+// 카메라를 현재 SCALE 기준으로 플레이어 중앙에 맞춤
+function _snapCameraToPlayer() {
+    const lW = canvas.width  / SCALE;
+    const lH = canvas.height / SCALE;
+    // 논리 뷰가 월드보다 넓어질 경우 중앙 고정 (맵 밖 노출 방지)
+    if (lW >= world.width) {
+        camera.x = (world.width - lW) / 2;
+    } else {
+        camera.x = Math.max(0, Math.min(player.x + player.width  / 2 - lW / 2, world.width  - lW));
+    }
+    if (lH >= world.height) {
+        cameraY = (world.height - lH) / 2;
+    } else {
+        cameraY = Math.max(0, Math.min(player.y + player.height / 2 - lH / 2, world.height - lH));
+    }
+}
+
+function updateTutorialIntro() {
+    if (introSeq.phase === 'idle' || introSeq.phase === 'done') return;
+
+    if (introSeq.phase === 'fall') {
+        // 서서히 클로즈업
+        introSeq.zoomTimer++;
+        const t    = Math.min(introSeq.zoomTimer / introSeq.zoomDuration, 1);
+        const ease = t * t * (3 - 2 * t);   // smoothstep
+        SCALE = introSeq.zoomFar + (introSeq.zoomClose - introSeq.zoomFar) * ease;
+        _snapCameraToPlayer();
+
+        if (t >= 1) {
+            introSeq.phase     = 'hint';
+            introSeq.hintBlink = 0;
+        }
+
+    } else if (introSeq.phase === 'hint') {
+        introSeq.hintBlink++;
+        // Space 입력 감지
+        if (keys.space) {
+            keys.space        = false;
+            keys.spacePressed = false;
+            introSeq.phase        = 'wakeup';
+            introSeq.wakeupTimer  = 0;
+            // 바닥에 정확히 스냅 (쓰러진 상태에서 hitbox가 틀어졌을 수 있으므로)
+            const floorY = MAP_DATA[2].platforms.find(p => p.type === 'solid').y;
+            player.y       = floorY - player.height;
+            player.dy      = 0;
+            player.grounded = true;
+            _snapCameraToPlayer();
+        }
+
+    } else if (introSeq.phase === 'wakeup') {
+        introSeq.wakeupTimer++;
+        if (introSeq.wakeupTimer >= introSeq.wakeupDuration) {
+            introSeq.phase      = 'stand';
+            introSeq.standTimer = 0;
+        }
+
+    } else if (introSeq.phase === 'stand') {
+        introSeq.standTimer++;
+        if (introSeq.standTimer >= introSeq.standDuration) {
+            // 줌아웃 시작 - 현재 카메라 위치 기록
+            introSeq.phase             = 'zoomout';
+            introSeq.zoomOutTimer      = 0;
+            introSeq.zoomOutStartScale = SCALE;
+            introSeq.zoomOutCamStartX  = camera.x;
+            introSeq.zoomOutCamStartY  = cameraY;
+        }
+
+    } else if (introSeq.phase === 'zoomout') {
+        introSeq.zoomOutTimer++;
+        const t    = Math.min(introSeq.zoomOutTimer / introSeq.zoomOutDuration, 1);
+        const ease = t * t * (3 - 2 * t);
+        SCALE = introSeq.zoomOutStartScale + (introSeq.zoomNormal - introSeq.zoomOutStartScale) * ease;
+
+        // 카메라도 목표 위치로 보간
+        const lW      = canvas.width  / SCALE;
+        const lH      = canvas.height / SCALE;
+        const targetX = Math.max(0, Math.min(player.x + player.width  / 2 - lW / 2, world.width  - lW));
+        const targetY = Math.max(0, Math.min(player.y + player.height / 2 - lH / 2, world.height - lH));
+        camera.x = introSeq.zoomOutCamStartX + (targetX - introSeq.zoomOutCamStartX) * ease;
+        cameraY  = introSeq.zoomOutCamStartY  + (targetY  - introSeq.zoomOutCamStartY)  * ease;
+
+        if (t >= 1) {
+            SCALE = introSeq.zoomNormal;
+            _snapCameraToPlayer();
+            introSeq.phase = 'monologue';
+            _startIntroMonologue();
+        }
+
+    } else if (introSeq.phase === 'monologue') {
+        // 대화 시스템이 비활성화되면 인트로 완전 종료
+        if (!dialogue.active) {
+            introSeq.phase  = 'done';
+            // 독백 종료 직후 이동 힌트 표시 시작
+            if (currentMapIndex === 2) {
+                moveHint.active    = true;
+                moveHint.blinkTimer = 0;
+                map2Events.moveHintActive = true;
+            }
+        }
+    }
+}
+
+function _startIntroMonologue() {
+    dialogue.active      = true;
+    dialogue.cast        = ['STORY1'];
+    dialogue.lines       = [
+        // ── 여기에 실제 독백 대사를 채워 주세요 ──
+        { speaker: '???', text: '윽...',        speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '여긴... 어디지?',   speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '아니, 그보다도',             speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '나는... 누구지?',             speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '아무것도 기억나지 않아. 나는 왜 이런 곳에 쓰러져 있던거지?',             speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '윽..떠올리려 하면 머리가 깨질듯이 아파.',             speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '어떻게 된 일인지는 모르겠지만..',             speakerType: 'player', illustKey: 'STORY1' },
+        { speaker: '???', text: '일단, 주변을 살펴봐야겠어.',             speakerType: 'player', illustKey: 'STORY1' },
+    ];
+    dialogue.currentLine = 0;
+    dialogue.speakerName = dialogue.lines[0].speaker;
+    dialogue.speakerType = dialogue.lines[0].speakerType;
+    dialogue.illustKey   = dialogue.lines[0].illustKey;
+    dialogue.displayText = '';
+    dialogue.charIndex   = 0;
+    dialogue.typingTimer = 0;
+    dialogue.isFinished  = false;
+}
+
+// 인트로 중 플레이어 스프라이트 키 반환 (draw()에서 호출)
+function getIntroPlayerKey() {
+    switch (introSeq.phase) {
+        case 'fall':
+        case 'hint':
+            return 'PLAYER_FALL_DOWN';
+        case 'wakeup':
+            return 'PLAYER_WAKE_UP';
+        case 'stand':
+        case 'zoomout':
+        case 'monologue':
+            return 'PLAYER_STAND';
+        default:
+            return null;   // 'idle' or 'done' → 일반 로직에 맡김
+    }
+}
+
+// 인트로 중 플레이어 입력/물리를 차단해야 하는지 여부
+function isIntroActive() {
+    return introSeq.phase !== 'idle' && introSeq.phase !== 'done';
+}
+
+// ── 전투 튜토리얼 컷신 업데이트 ────────────────────────────────────────
+function updateCombatCutscene() {
+    if (currentMapIndex !== 2) return;
+
+    // ── 트리거 감지 ──────────────────────────────────────────────────
+    if (!combatTutorial.cutTriggered &&
+        combatTutorial.cutPhase === 'idle' &&
+        player.x + player.width >= combatTutorial.cutTriggerX) {
+
+        combatTutorial.cutTriggered = true;
+        combatTutorial.cutPhase     = 'freeze';
+        combatTutorial.cutTimer     = 0;
+        map2Events.cutTriggered     = true;
+
+        // 현재 상태 저장
+        combatTutorial.savedScale = SCALE;
+        combatTutorial.savedCamX  = camera.x;
+        combatTutorial.savedCamY  = cameraY;
+        combatTutorial.cutScale   = SCALE;
+        combatTutorial.cutCamX    = camera.x;
+        combatTutorial.cutCamY    = cameraY;
+
+        // 적 위치 기준 목표 카메라 계산
+        const tutEnemy = enemies.find(e => e.isTutorialEnemy);
+        combatTutorial.zoomInScale = BASE_SCALE * 1.65;
+        if (tutEnemy) {
+            const lW = canvas.width  / combatTutorial.zoomInScale;
+            const lH = canvas.height / combatTutorial.zoomInScale;
+            combatTutorial.targetCamX = Math.max(0,
+                Math.min(tutEnemy.x + tutEnemy.width  / 2 - lW / 2, world.width  - lW));
+            combatTutorial.targetCamY = Math.max(0,
+                Math.min(tutEnemy.y + tutEnemy.height / 2 - lH / 2, world.height - lH));
+        }
+        return;
+    }
+
+    if (combatTutorial.cutPhase === 'idle' ||
+        combatTutorial.cutPhase === 'done') return;
+
+    combatTutorial.cutTimer++;
+    const t = combatTutorial.cutTimer;
+
+    if (combatTutorial.cutPhase === 'freeze') {
+        // 플레이어 이동 완전 잠금 (update()에서 처리)
+        if (t >= combatTutorial.FREEZE_DUR) {
+            combatTutorial.cutPhase = 'zoomToEnemy';
+            combatTutorial.cutTimer = 0;
+        }
+
+    } else if (combatTutorial.cutPhase === 'zoomToEnemy') {
+        const ratio = Math.min(t / combatTutorial.ZOOM_IN_DUR, 1);
+        const ease  = ratio * ratio * (3 - 2 * ratio);
+
+        SCALE    = combatTutorial.savedScale +
+                   (combatTutorial.zoomInScale - combatTutorial.savedScale) * ease;
+        camera.x = combatTutorial.savedCamX +
+                   (combatTutorial.targetCamX - combatTutorial.savedCamX) * ease;
+        cameraY  = combatTutorial.savedCamY +
+                   (combatTutorial.targetCamY - combatTutorial.savedCamY) * ease;
+        combatTutorial.cutScale = SCALE;
+        combatTutorial.cutCamX  = camera.x;
+        combatTutorial.cutCamY  = cameraY;
+
+        if (ratio >= 1) {
+            combatTutorial.cutPhase = 'hold';
+            combatTutorial.cutTimer = 0;
+        }
+
+    } else if (combatTutorial.cutPhase === 'hold') {
+        // 적 위치 고정 유지 (카메라 고정)
+        SCALE    = combatTutorial.zoomInScale;
+        camera.x = combatTutorial.targetCamX;
+        cameraY  = combatTutorial.targetCamY;
+
+        if (t >= combatTutorial.HOLD_DUR) {
+            combatTutorial.cutPhase = 'zoomBack';
+            combatTutorial.cutTimer = 0;
+        }
+
+    } else if (combatTutorial.cutPhase === 'zoomBack') {
+        const ratio = Math.min(t / combatTutorial.ZOOM_OUT_DUR, 1);
+        const ease  = ratio * ratio * (3 - 2 * ratio);
+
+        SCALE    = combatTutorial.zoomInScale +
+                   (combatTutorial.savedScale - combatTutorial.zoomInScale) * ease;
+        camera.x = combatTutorial.targetCamX +
+                   (combatTutorial.savedCamX - combatTutorial.targetCamX) * ease;
+        cameraY  = combatTutorial.targetCamY +
+                   (combatTutorial.savedCamY - combatTutorial.targetCamY) * ease;
+
+        if (ratio >= 1) {
+            SCALE    = combatTutorial.savedScale;
+            camera.x = combatTutorial.savedCamX;
+            cameraY  = combatTutorial.savedCamY;
+            combatTutorial.cutPhase = 'monologue';
+            combatTutorial.cutTimer = 0;
+
+            // 주인공 독백(생각) 발동
+            dialogue.active      = true;
+            dialogue.cast        = [];
+            dialogue.lines       = [
+                { speaker: '', text: '누군가 있다.',         speakerType: 'thought', illustKey: '' },
+                { speaker: '', text: '어쩌면 이 일에 대해 아는게 있지 않을까?', speakerType: 'thought', illustKey: '' },
+            ];
+            dialogue.currentLine = 0;
+            dialogue.speakerName = dialogue.lines[0].speaker;
+            dialogue.speakerType = dialogue.lines[0].speakerType;
+            dialogue.illustKey   = dialogue.lines[0].illustKey;
+            dialogue.displayText = '';
+            dialogue.charIndex   = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished  = false;
+        }
+
+    } else if (combatTutorial.cutPhase === 'monologue') {
+        // 독백이 끝나면 컷신 완전 종료 → 이후 접근 대화 트리거가 정상 작동
+        if (!dialogue.active) {
+            combatTutorial.cutPhase = 'done';
+        }
+    }
+}
+
+// ── 위치 트리거 힌트 업데이트 ────────────────────────────────────────
+function updateTutHint() {
+    if (currentMapIndex !== 2) return;
+    if (isIntroActive()) return;
+
+    // 이동 힌트: hideX 도달 시 숨김
+    if (moveHint.active && player.x + player.width >= moveHint.hideX) {
+        moveHint.active = false;
+    }
+
+    // ── 덩굴 직전 독백 트리거 (dashHint보다 먼저, x=3380 = 덩굴 250px 앞) ──
+    if (!thornMonologue.shown && player.x + player.width >= thornMonologue.triggerX) {
+        thornMonologue.shown = true;
+        map2Events.thornMonologueShown = true;
+        // 힌트들 일시 숨김
+        dashHint.active = false;
+        tutHint.active  = false;
+        dialogue.active      = true;
+        dialogue.cast        = ['STORY1'];
+        dialogue.lines       = [
+            { speaker: '???', text: '가시덩굴인가.',                              speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '???', text: '음... 빠르게 지나간다면 다치지 않을 수 있겠지?', speakerType: 'player', illustKey: 'STORY1' },
+        ];
+        dialogue.currentLine = 0;
+        dialogue.speakerName = dialogue.lines[0].speaker;
+        dialogue.speakerType = dialogue.lines[0].speakerType;
+        dialogue.illustKey   = dialogue.lines[0].illustKey;
+        dialogue.displayText = '';
+        dialogue.charIndex   = 0;
+        dialogue.typingTimer = 0;
+        dialogue.isFinished  = false;
+        return;
+    }
+
+    if (dialogue.active) return;   // 독백 진행 중엔 이하 힌트 갱신 중단
+
+    // 대시 힌트: 독백 끝난 후 트리거 도달 시 표시
+    if (!dashHint.shown && player.x + player.width >= dashHint.triggerX) {
+        dashHint.active = true;
+        dashHint.shown  = true;
+        map2Events.dashHintShown = true;
+    }
+    if (dashHint.active && player.x >= dashHint.hideX) {
+        dashHint.active = false;
+    }
+
+    // 순간이동 힌트: telewall 직전 표시
+    if (!teleHint.shown && player.x + player.width >= teleHint.triggerX) {
+        teleHint.active = true;
+        teleHint.shown  = true;
+        map2Events.teleHintShown = true;
+    }
+    if (teleHint.active && player.x >= teleHint.hideX) {
+        teleHint.active = false;
+    }
+
+    // ── telewall 직전 독백 (teleHint 트리거보다 먼저, x=5150) ──
+    if (!teleMonologue.shown && player.x + player.width >= teleMonologue.triggerX) {
+        teleMonologue.shown = true;
+        map2Events.teleMonologueShown = true;
+        teleHint.active = false;   // 힌트 일시 숨김
+        dialogue.active      = true;
+        dialogue.cast        = ['STORY1'];
+        dialogue.lines       = [
+            { speaker: '???', text: '주술로 만들어진 벽이 이런곳에..?', speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '???', text: '일반적인 방법으로 통과하긴 힘들겠어.', speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '???', text: '이럴땐.. 이걸쓰면 되겠지.',                                      speakerType: 'player', illustKey: 'STORY1' },
+        ];
+        dialogue.currentLine = 0;
+        dialogue.speakerName = dialogue.lines[0].speaker;
+        dialogue.speakerType = dialogue.lines[0].speakerType;
+        dialogue.illustKey   = dialogue.lines[0].illustKey;
+        dialogue.displayText = '';
+        dialogue.charIndex   = 0;
+        dialogue.typingTimer = 0;
+        dialogue.isFinished  = false;
+        return;
+    }
+
+    // ── telewall 통과 직후 독백 (x=5460) ──
+    if (!teleAfterMonologue.shown && player.x >= teleAfterMonologue.triggerX) {
+        teleAfterMonologue.shown = true;
+        map2Events.teleAfterMonologueShown = true;
+        teleHint.active = false;
+        dialogue.active      = true;
+        dialogue.cast        = ['STORY1'];
+        dialogue.lines       = [
+            { speaker: '???', text: '...잠깐, 나는 어떻게 이런걸 할 줄 아는거지?', speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '???', text: '윽... 떠올리려 하니 다시 머리가 아파.',          speakerType: 'player', illustKey: 'STORY1' },
+            { speaker: '???', text: '나는 대체..',                                 speakerType: 'player', illustKey: 'STORY1' },
+        ];
+        dialogue.currentLine = 0;
+        dialogue.speakerName = dialogue.lines[0].speaker;
+        dialogue.speakerType = dialogue.lines[0].speakerType;
+        dialogue.illustKey   = dialogue.lines[0].illustKey;
+        dialogue.displayText = '';
+        dialogue.charIndex   = 0;
+        dialogue.typingTimer = 0;
+        dialogue.isFinished  = false;
+        return;
+    }
+
+    // 2단점프 힌트: 덩굴 직전에 사라짐
+    if (tutHint.active && player.x + player.width >= tutHint.hideX) {
+        tutHint.active = false;
+    }
+
+    // 공격 튜토리얼 힌트: 적이 죽으면 숨기고 처치 후 독백 발동
+    if (combatTutorial.hintActive || combatTutorial.hintShown) {
+        const tutEnemy = enemies.find(e => e.isTutorialEnemy);
+        if (!tutEnemy || tutEnemy.isDead) {
+            combatTutorial.hintActive = false;
+            // 처치 직후 독백 (한 번만)
+            if (!combatTutorial.killMonologueDone) {
+                combatTutorial.killMonologueDone = true;
+                map2Events.killMonologueDone     = true;
+                dialogue.active      = true;
+                dialogue.cast        = [];
+                dialogue.lines       = [
+                    { speaker: '', text: '그자가 힘없이 쓰러진다.',                             speakerType: 'thought', illustKey: '' },
+                    { speaker: '???', text: '잠깐, 당신..!',             speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: '..다행이다. 그냥 기절한 것 뿐이야.',             speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: '깨어나고 처음 보는 사람이 날 죽이려 들고, 나도 그자를 죽일 뻔 하다니...',             speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: '대체 이게 어떻게 된 일이지?',             speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '???', text: '...',             speakerType: 'player', illustKey: 'STORY1' },
+                    { speaker: '', text: '곧 지금 그런 고민을 해봐야 의미 없다는 생각에, 다시 앞으로 나아가기로 했다.',                             speakerType: 'thought', illustKey: '' },
+                ];
+                dialogue.currentLine = 0;
+                dialogue.speakerName = dialogue.lines[0].speaker;
+                dialogue.speakerType = dialogue.lines[0].speakerType;
+                dialogue.illustKey   = dialogue.lines[0].illustKey;
+                dialogue.displayText = '';
+                dialogue.charIndex   = 0;
+                dialogue.typingTimer = 0;
+                dialogue.isFinished  = false;
+            }
+        }
+    }
+
+    if (tutHint.shown) return;
+    if (player.x + player.width >= tutHint.triggerX) {
+        tutHint.active = true;
+        tutHint.shown  = true;
+        map2Events.tutHintShown = true;
+    }
+}
+
+// ── 위치 트리거 힌트 렌더링 (drawIntroHint와 동일한 스타일) ──────────
+function drawTutHint() {
+    if (!tutHint.active || currentMapIndex !== 2) return;
+
+    tutHint.blinkTimer++;
+    const blink = Math.floor(tutHint.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const text  = tutHint.text;
+    const fontH = 38;
+    ctx.font = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const textW  = ctx.measureText(text).width;
+    const boxPad = 32;
+    const boxW   = textW + boxPad * 2;
+    const boxH   = fontH + 24;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 160;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.55)';
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth    = 5;
+    ctx.lineJoin     = 'round';
+    ctx.strokeText(text, LOGICAL_W / 2, boxY + boxH / 2);
+    ctx.fillStyle    = 'rgba(210, 230, 255, 1)';
+    ctx.fillText(text,   LOGICAL_W / 2, boxY + boxH / 2);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign    = 'left';
+    ctx.restore();
+}
+
+// ── 독백 종료 후 이동 힌트 렌더링 ────────────────────────────────────
+function drawMoveHint() {
+    if (!moveHint.active || currentMapIndex !== 2) return;
+
+    moveHint.blinkTimer++;
+    const blink = Math.floor(moveHint.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const lines   = ['A / D  —  이동', 'Space  —  점프'];
+    const fontH   = 38;
+    ctx.font      = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const lineH   = fontH + 14;
+    const boxPad  = 32;
+    const maxW    = Math.max(...lines.map(t => ctx.measureText(t).width));
+    const boxW    = maxW + boxPad * 2;
+    const boxH    = lineH * lines.length + 16;
+    const boxX    = (LOGICAL_W - boxW) / 2;
+    const boxY    = LOGICAL_H - 200;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.55)';
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    lines.forEach((text, i) => {
+        const ty = boxY + 20 + fontH + i * lineH;
+        ctx.save();
+        ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(text, LOGICAL_W / 2, ty);
+        ctx.fillStyle    = 'rgba(210, 230, 255, 1)';
+        ctx.fillText(text,   LOGICAL_W / 2, ty);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+        ctx.restore();
+    });
+}
+
+// ── 대시 힌트 렌더링 ───────────────────────────────────────────────
+function drawDashHint() {
+    if (!dashHint.active || currentMapIndex !== 2) return;
+
+    dashHint.blinkTimer++;
+    const blink = Math.floor(dashHint.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const lines  = ['우클릭 / I  —  대시'];
+    const fontH  = 38;
+    ctx.font     = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const lineH  = fontH + 14;
+    const boxPad = 32;
+    const maxW   = Math.max(...lines.map(t => ctx.measureText(t).width));
+    const boxW   = maxW + boxPad * 2;
+    const boxH   = lineH * lines.length + 16;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 200;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 200, 100, 0.65)';  // 대시는 노란 테두리로 구분
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    lines.forEach((text, i) => {
+        const ty = boxY + 20 + fontH + i * lineH;
+        ctx.save();
+        ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(text, LOGICAL_W / 2, ty);
+        ctx.fillStyle    = 'rgba(210, 230, 255, 1)';
+        ctx.fillText(text,   LOGICAL_W / 2, ty);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+        ctx.restore();
+    });
+}
+
+// ── 순간이동 힌트 렌더링 ────────────────────────────────────────────
+function drawTeleHint() {
+    if (!teleHint.active || currentMapIndex !== 2) return;
+
+    teleHint.blinkTimer++;
+    const blink = Math.floor(teleHint.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const lines  = ['E  —  투사체 발사', 'E(재사용)  —  투사체 위치로 순간이동'];
+    const fontH  = 38;
+    ctx.font     = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const lineH  = fontH + 14;
+    const boxPad = 32;
+    const maxW   = Math.max(...lines.map(t => ctx.measureText(t).width));
+    const boxW   = maxW + boxPad * 2;
+    const boxH   = lineH * lines.length + 16;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 200;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(180, 120, 255, 0.75)';   // 보라 테두리 (telewall 색과 통일)
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    lines.forEach((text, i) => {
+        const ty = boxY + 20 + fontH + i * lineH;
+        ctx.save();
+        ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(text, LOGICAL_W / 2, ty);
+        ctx.fillStyle    = 'rgba(210, 190, 255, 1)';   // 연보라 텍스트
+        ctx.fillText(text,   LOGICAL_W / 2, ty);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+        ctx.restore();
+    });
+}
+
+
+function drawIntroHint() {    if (introSeq.phase !== 'hint') return;
+
+    const blink = Math.floor(introSeq.hintBlink / 25) % 2 === 0;
+    if (!blink) return;
+
+    const text  = 'Space  —  점프';
+    const fontH = 38;
+    ctx.font = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const textW  = ctx.measureText(text).width;
+    const boxPad = 32;
+    const boxW   = textW + boxPad * 2;
+    const boxH   = fontH + 24;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 160;
+
+    // 배경 박스
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.55)';
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    // 텍스트
+    ctx.save();
+    ctx.font        = `bold ${fontH}px ${DIALOGUE_FONT}`;
+    ctx.textAlign   = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth   = 5;
+    ctx.lineJoin    = 'round';
+    ctx.strokeText(text, LOGICAL_W / 2, boxY + boxH / 2);
+    ctx.fillStyle   = 'rgba(210, 230, 255, 1)';
+    ctx.fillText(text,   LOGICAL_W / 2, boxY + boxH / 2);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign    = 'left';
+    ctx.restore();
+}
+// ── 전투 튜토리얼 힌트 렌더링 (공격 키 안내) ──────────────────────────
+function drawCombatTutHint() {
+    if (!combatTutorial.hintActive || currentMapIndex !== 2) return;
+
+    combatTutorial.blinkTimer++;
+    const blink = Math.floor(combatTutorial.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const lines  = ['좌클릭 / U  —  공격'];
+    const fontH  = 38;
+    ctx.font     = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const lineH  = fontH + 14;
+    const boxPad = 32;
+    const maxW   = Math.max(...lines.map(t => ctx.measureText(t).width));
+    const boxW   = maxW + boxPad * 2;
+    const boxH   = lineH * lines.length + 16;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 200;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 120, 120, 0.75)';   // 붉은 테두리 (전투 강조)
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    lines.forEach((text, i) => {
+        const ty = boxY + 20 + fontH + i * lineH;
+        ctx.save();
+        ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(text, LOGICAL_W / 2, ty);
+        ctx.fillStyle    = 'rgba(255, 210, 210, 1)';   // 연붉은 텍스트
+        ctx.fillText(text,   LOGICAL_W / 2, ty);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+        ctx.restore();
+    });
+}
+// ── 맵 3 (세로로 길고 가로로 짧은 형태) ──────────────────────────────
+// 튜토리얼 맵(맵2) 오른쪽 출구에서 진입
+// ── 맵 3: 절벽 등반 (바닥 진입 → 꼭대기 출구) ───────────────────────
+// 맵2 오른쪽 끝(x=7990)에서 오른쪽으로 진입 → 맵3 하단 바닥 스폰
+// 위로 올라가며 꼭대기(y≈80)에 도달하면 맵2로 복귀 출구
+MAP_DATA.push({
+    id: 3,
+    // 가로: 논리 화면 1개 너비(1280) — 카메라 x 고정, y축만 스크롤
+    worldWidth:  1280,
+    worldHeight: 3200,
+    bgColor: '#c8a878',   // 맵2 오른쪽 절벽과 동일한 갈색
+
+    // 진입 스폰: 바닥 왼쪽 끝 (바닥y=3150, 플레이어높이=80)
+    spawnX: 20,
+    spawnY: 3070,
+
+    platforms: [
+        // ── 바닥 ────────────────────────────────────────────────────
+        { x: 0,    y: 3150, width: 1280, height: 50,  type: 'solid' },
+
+        // ── 오른쪽 벽 (왼쪽 벽 없음 — 맵2와 오픈 연결) ─────────────
+        { x: 1280, y: 0,    width: 60,   height: 3200, type: 'wall' },
+
+        // ── 구간 1: 바닥 근처 (y 2800~3000) ─────────────────────────
+        { x: 700,  y: 3000, width: 220,  height: 20,  type: 'platform' },
+        { x: 180,  y: 2870, width: 180,  height: 20,  type: 'platform' },
+        { x: 860,  y: 2760, width: 240,  height: 20,  type: 'platform' },
+        { x: 350,  y: 2640, width: 200,  height: 20,  type: 'platform' },
+        { x: 60,   y: 2520, width: 170,  height: 20,  type: 'platform' },
+
+        { x: 900,  y: 2410, width: 190,  height: 20,  type: 'platform' },
+        { x: 490,  y: 2300, width: 210,  height: 20,  type: 'platform' },
+        { x: 80,   y: 2180, width: 230,  height: 20,  type: 'platform' },
+        { x: 750,  y: 2070, width: 180,  height: 20,  type: 'platform' },
+        { x: 280,  y: 1960, width: 200,  height: 20,  type: 'platform' },
+
+        { x: 920,  y: 1840, width: 220,  height: 20,  type: 'platform' },
+        { x: 550,  y: 1730, width: 190,  height: 20,  type: 'platform' },
+        { x: 100,  y: 1620, width: 210,  height: 20,  type: 'platform' },
+        { x: 800,  y: 1510, width: 180,  height: 20,  type: 'platform' },
+        { x: 380,  y: 1390, width: 230,  height: 20,  type: 'platform' },
+        { x: 50,   y: 1270, width: 200,  height: 20,  type: 'platform' },
+
+        { x: 870,  y: 1160, width: 210,  height: 20,  type: 'platform' },
+        { x: 460,  y: 1050, width: 180,  height: 20,  type: 'platform' },
+        { x: 120,  y: 940,  width: 220,  height: 20,  type: 'platform' },
+        { x: 760,  y: 830,  width: 200,  height: 20,  type: 'platform' },
+        { x: 320,  y: 720,  width: 190,  height: 20,  type: 'platform' },
+        { x: 950,  y: 610,  width: 210,  height: 20,  type: 'platform' },
+
+        { x: 200,  y: 500,  width: 230,  height: 20,  type: 'platform' },
+        { x: 700,  y: 390,  width: 200,  height: 20,  type: 'platform' },
+        { x: 80,   y: 280,  width: 210,  height: 20,  type: 'platform' },
+    ],
+
+    signs: [],
+    spikes: [],
+    enemies: [],
+    dummies: [],
+    transitions: [
+        // 바닥 왼쪽 출구: 왼쪽으로 나가면 맵2 복귀 (맵2 통로와 y/height 동일 비율)
+        {
+            x: -70, y: 2910,
+            width: 80, height: 240,
+            toMap: 2, spawnX: 7870, spawnY: 560,
+            direction: 'left'
+        }
+    ],
+    onEnter: () => {
+        player.x        = MAP_DATA[3].spawnX;
+        player.y        = MAP_DATA[3].spawnY;
+        player.dx       = 0;
+        player.dy       = 0;
+        player.grounded = false;
+    }
+});
+
 // [START] 게임 엔진 구동
 document.fonts.ready.then(() => {
     loadAssets(() => {
