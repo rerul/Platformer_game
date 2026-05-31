@@ -4581,7 +4581,7 @@ const ENEMY_TYPES = {
     boss: {
         width:          100,
         height:         130,
-        hp:             2000,
+        hp:             1200,
         speed:          4.2,          // 플레이어(7)의 0.6배
         gravity:        0.9,
         detectRange:    1400,
@@ -4591,7 +4591,7 @@ const ENEMY_TYPES = {
         attackCooldown: 130,  // 공격1 쿨타임 (150 × 0.85)
         // 공격2 돌진 파라미터
         atk2Damage:     14,
-        atk2Windup:     30,       // 공격2 딜레이 프레임
+        atk2Windup:     35,       // 공격2 딜레이 프레임
         atk2DashSpeed:  38,       // 돌진 초기 dx
         atk2DashDecay:  0.88,     // 매 프레임 dx에 곱하는 감쇄율
         atk2DashFrames: 35,       // 돌진 지속 프레임
