@@ -4581,7 +4581,7 @@ const ENEMY_TYPES = {
     boss: {
         width:          100,
         height:         130,
-        hp:             500,
+        hp:             2000,
         speed:          4.2,          // 플레이어(7)의 0.6배
         gravity:        0.9,
         detectRange:    1400,
