@@ -33,6 +33,66 @@ const tutorial = {
     currentPage: 0
 };
 
+// ══════════════════════════════════════════════════════════════════
+// [PAUSE SYSTEM] 일시정지 메뉴
+// ══════════════════════════════════════════════════════════════════
+const pauseMenu = {
+    active:   false,   // 일시정지 활성화 여부
+    // 'main' | 'settings' | 'confirm_save'
+    screen:   'main',
+
+    // 선택된 버튼 인덱스 (마우스 hover)
+    hoveredBtn: -1,
+
+    // 세이브포인트 이동 암전 연출
+    fadePhase:  'none',   // 'none' | 'fadeOut' | 'fadeIn'
+    fadeAlpha:  0,
+    fadeTimer:  0,
+    FADE_DUR:   35,
+
+    // 볼륨 설정
+    masterVolume: 0.0,
+    bgmVolume:    0.4,
+    sfxVolume:    0.4,
+
+    // 드래그 상태
+    dragging: null,   // null | 'master' | 'bgm' | 'sfx'
+    dragStartX: 0,
+    dragStartVal: 0,
+
+    open() {
+        if (this.active) return;
+        this.active  = true;
+        this.screen  = 'main';
+        this.hoveredBtn = -1;
+        // BGM 일시 정지
+        if (bgmPlayer.current) bgmPlayer.current.pause();
+    },
+
+    close() {
+        this.active  = false;
+        this.screen  = 'main';
+        this.dragging = null;
+        // BGM 재개
+        if (bgmPlayer.current) bgmPlayer.current.play().catch(() => {});
+    },
+
+    // 볼륨 값 실제 적용
+    applyVolumes() {
+        const master = this.masterVolume;
+        // BGM
+        if (bgmPlayer.current) {
+            bgmPlayer.current.volume = Math.min(1, this.bgmVolume * master);
+        }
+        // SFX
+        Object.entries(SOUNDS).forEach(([key, def]) => {
+            if (sounds[key]) {
+                sounds[key].volume = Math.min(1, def.volume * this.sfxVolume * master);
+            }
+        });
+    },
+};
+
 // 위치 트리거 힌트 (튜토리얼 맵 전용)
 const tutHint = {
     active:     false,
@@ -156,6 +216,19 @@ const ASSETS = {
     ENEMY1_ATTACK1:  './assets/images/enemy1_attack1.png',
     ENEMY1_ATTACK2:  './assets/images/enemy1_attack2.png',
     BOSS_STORY1:     './assets/images/boss_story1.png',
+    BOSS_STAND:      './assets/images/boss_stand.png',
+    BOSS_MOVE:       './assets/images/boss_move.png',
+    BOSS_ATTACK:     './assets/images/boss_attack.png',
+    BOSS_ATTACK1_1:  './assets/images/boss_attack1_1.png',
+    BOSS_ATTACK1_2:  './assets/images/boss_attack1_2.png',
+    BOSS_ATTACK1_3:  './assets/images/boss_attack1_3.png',
+    BOSS_ATTACK2_1:  './assets/images/boss_attack2_1.png',   // 공격2 딜레이
+    BOSS_ATTACK2_2:  './assets/images/boss_attack2_2.png',   // 공격2 돌진
+    BOSS_ATTACK3_1:  './assets/images/boss_attack3_1.png',   // 공격3 windup(공중 정지)
+    BOSS_ATTACK3_2:  './assets/images/boss_attack3_2.png',   // 공격3 strike(내려찍기)
+    BOSS_ATTACK3_3:  './assets/images/boss_attack3_3.png',   // 공격3 post(후딜레이)
+    BOSS_JUMP1:      './assets/images/boss_jump1.png',
+    BOSS_JUMP2:      './assets/images/boss_jump2.png',
     ENEMY1_ATTACK3: './assets/images/enemy1_attack3.png',
     ENEMY2_STAND:      './assets/images/enemy2_stand.png',
     ENEMY2_MOVE:      './assets/images/enemy2_move.png',
@@ -170,7 +243,11 @@ const ASSETS = {
     ENEMY1_STORY:    './assets/images/enemy1_story.png',
     BG_FOREST:       './assets/images/background_forest.png',
     BG_FOREST2:      './assets/images/background_forest2.png',
-    BG_CLIFF:        './assets/images/background_cliff.png'
+    BG_PLAIN2:       './assets/images/background_plain2.png',
+    BG_PLAIN:        './assets/images/background_plain.png',
+    BG_CLIFF:        './assets/images/background_cliff.png',
+    BG_SAVEPOINT:    './assets/images/background_savepoint.png',
+    BG_BOSS:         './assets/images/background_boss.png'
 };
 
 const SOUNDS = {
@@ -189,7 +266,8 @@ const SOUNDS = {
 };
 
 const BGM = {
-    BGM1: './assets/audio/bgm1.mp3'
+    BGM1:     './assets/audio/bgm1.mp3',
+    BGM_BOSS1: './assets/audio/bgm_boss1.mp3'
 };
 
 const sprites = {};
@@ -199,25 +277,28 @@ const sounds  = {};
 const bgmPlayer = {
     current: null,   // 현재 재생 중인 Audio 객체
     currentKey: '',  // 현재 재생 중인 BGM 키
+    _fadeInterval: null,   // 진행 중인 페이드 인터벌
 
     play(key, fadeIn = false) {
-        if (this.currentKey === key) return; // 이미 같은 곡이면 무시
+        if (this.currentKey === key) return;
         const src = BGM[key];
         if (!src) return;
 
         this.stop();
 
         const audio = new Audio(src);
-        audio.loop   = true;
-        audio.volume = fadeIn ? 0 : 0.6;
+        audio.loop = true;
+
+        const targetVol = Math.min(1, pauseMenu.bgmVolume * pauseMenu.masterVolume);
+        audio.volume = fadeIn ? 0 : targetVol;
         audio.play().catch(() => {});
 
         if (fadeIn) {
             let vol = 0;
-            const fade = setInterval(() => {
-                vol = Math.min(vol + 0.05, 0.6);
+            this._fadeInterval = setInterval(() => {
+                vol = Math.min(vol + 0.02, targetVol);
                 audio.volume = vol;
-                if (vol >= 0.6) clearInterval(fade);
+                if (vol >= targetVol) { clearInterval(this._fadeInterval); this._fadeInterval = null; }
             }, 50);
         }
 
@@ -226,15 +307,13 @@ const bgmPlayer = {
     },
 
     stop(fadeOut = false) {
+        if (this._fadeInterval) { clearInterval(this._fadeInterval); this._fadeInterval = null; }
         if (!this.current) return;
         if (fadeOut) {
             const target = this.current;
             const fade = setInterval(() => {
                 target.volume = Math.max(target.volume - 0.05, 0);
-                if (target.volume <= 0) {
-                    target.pause();
-                    clearInterval(fade);
-                }
+                if (target.volume <= 0) { target.pause(); clearInterval(fade); }
             }, 50);
         } else {
             this.current.pause();
@@ -243,12 +322,587 @@ const bgmPlayer = {
         this.currentKey = '';
     },
 
+    // 빠른 페이드아웃 후 콜백 실행
+    fadeOutFast(onDone, step = 0.08) {
+        if (this._fadeInterval) { clearInterval(this._fadeInterval); this._fadeInterval = null; }
+        if (!this.current) { onDone && onDone(); return; }
+        const target = this.current;
+        this.current    = null;
+        this.currentKey = '';
+        this._fadeInterval = setInterval(() => {
+            target.volume = Math.max(target.volume - step, 0);
+            if (target.volume <= 0) {
+                target.pause();
+                clearInterval(this._fadeInterval);
+                this._fadeInterval = null;
+                onDone && onDone();
+            }
+        }, 30);
+    },
+
     // 다른 곡으로 전환 (페이드 아웃 후 페이드 인)
     crossfade(key) {
         this.stop(true);
         setTimeout(() => this.play(key, true), 600);
     }
 };
+
+// ══════════════════════════════════════════════════════════════════
+// [PAUSE SYSTEM] 렌더링 & 마우스 처리
+// ══════════════════════════════════════════════════════════════════
+
+// 캔버스 논리 좌표 변환 (DPR 보정)
+function canvasLogicalPos(e) {
+    const rect   = canvas.getBoundingClientRect();
+    const scaleX = LOGICAL_W / rect.width;
+    const scaleY = LOGICAL_H / rect.height;
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top)  * scaleY,
+    };
+}
+
+// 일시정지 메뉴 그리기
+function drawPauseMenu() {
+    if (!pauseMenu.active) return;
+
+    const W = LOGICAL_W, H = LOGICAL_H;
+
+    // ── 반투명 암전 오버레이 (비네팅) ─────────────────────────────
+    const grad = ctx.createRadialGradient(W / 2, H / 2, H * 0.18, W / 2, H / 2, H * 0.75);
+    grad.addColorStop(0,   'rgba(0, 0, 0, 0.55)');
+    grad.addColorStop(1,   'rgba(0, 0, 0, 0.82)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    if (pauseMenu.screen === 'main') {
+        _drawPauseMain(W, H);
+    } else if (pauseMenu.screen === 'confirm_save') {
+        _drawPauseConfirmSave(W, H);
+    } else {
+        _drawPauseSettings(W, H);
+    }
+}
+
+function _pauseRoundRect(x, y, w, h, r) {
+    roundRect(ctx, x, y, w, h, r);
+}
+
+function _drawPauseMain(W, H) {
+    const panelW = 520;
+    const panelH = 420;
+    const panelX = (W - panelW) / 2;
+    const panelY = (H - panelH) / 2;
+
+    // ── 패널 배경 ──
+    ctx.save();
+    ctx.shadowColor = 'rgba(140, 180, 255, 0.22)';
+    ctx.shadowBlur  = 40 * DPR;
+    ctx.fillStyle   = 'rgba(6, 8, 20, 0.97)';
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.fill();
+    ctx.restore();
+
+    // 테두리
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.45)';
+    ctx.lineWidth   = 1.5;
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.stroke();
+    ctx.restore();
+
+    // 타이틀
+    ctx.save();
+    ctx.font         = `bold 52px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle  = 'rgba(0,0,0,0.95)';
+    ctx.lineWidth    = 6;
+    ctx.lineJoin     = 'round';
+    ctx.strokeText('일시정지', W / 2, panelY + 70);
+    ctx.fillStyle = 'rgba(210, 230, 255, 1)';
+    ctx.fillText('일시정지',   W / 2, panelY + 70);
+    ctx.restore();
+
+    // 구분선
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.2)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 40, panelY + 110);
+    ctx.lineTo(panelX + panelW - 40, panelY + 110);
+    ctx.stroke();
+    ctx.restore();
+
+    // 버튼 정의
+    const buttons = [
+        { label: '재개',                     id: 'resume'    },
+        { label: '설정',                     id: 'settings'  },
+        { label: '마지막 세이브 포인트로 이동', id: 'goto_save' },
+    ];
+
+    const btnW   = panelW - 80;
+    const btnH   = 64;
+    const btnX   = panelX + 40;
+    const btnGap = 18;
+    const startY = panelY + 138;
+
+    buttons.forEach((btn, i) => {
+        const btnY    = startY + i * (btnH + btnGap);
+        const hovered = pauseMenu.hoveredBtn === i;
+
+        // 버튼 배경
+        ctx.save();
+        if (hovered) {
+            ctx.fillStyle = 'rgba(80, 120, 210, 0.35)';
+            ctx.shadowColor = 'rgba(120, 170, 255, 0.5)';
+            ctx.shadowBlur  = 18 * DPR;
+        } else {
+            ctx.fillStyle = 'rgba(20, 26, 50, 0.75)';
+        }
+        _pauseRoundRect(btnX, btnY, btnW, btnH, 10);
+        ctx.fill();
+        ctx.restore();
+
+        // 버튼 테두리
+        ctx.save();
+        ctx.strokeStyle = hovered ? 'rgba(160, 200, 255, 0.75)' : 'rgba(160, 200, 255, 0.3)';
+        ctx.lineWidth = 1.5;
+        _pauseRoundRect(btnX, btnY, btnW, btnH, 10);
+        ctx.stroke();
+        ctx.restore();
+
+        // 버튼 텍스트
+        ctx.save();
+        ctx.font         = `bold 34px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(btn.label, btnX + btnW / 2, btnY + btnH / 2);
+        ctx.fillStyle = hovered ? 'rgba(220, 240, 255, 1)' : 'rgba(190, 215, 255, 0.95)';
+        ctx.fillText(btn.label, btnX + btnW / 2, btnY + btnH / 2);
+        ctx.restore();
+
+        // 저장
+        btn._x = btnX; btn._y = btnY; btn._w = btnW; btn._h = btnH;
+    });
+
+    // 버튼 배열을 메뉴에 저장 (클릭 판정용)
+    pauseMenu._mainBtns = buttons;
+
+    // 하단 안내
+    ctx.save();
+    ctx.font         = `20px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle    = 'rgba(140, 160, 200, 0.55)';
+    ctx.fillText('ESC — 재개', W / 2, panelY + panelH - 26);
+    ctx.restore();
+}
+
+function _drawPauseConfirmSave(W, H) {
+    const panelW = 560;
+    const panelH = 340;
+    const panelX = (W - panelW) / 2;
+    const panelY = (H - panelH) / 2;
+
+    // 패널 배경
+    ctx.save();
+    ctx.shadowColor = 'rgba(255, 180, 80, 0.18)';
+    ctx.shadowBlur  = 40 * DPR;
+    ctx.fillStyle   = 'rgba(6, 8, 20, 0.97)';
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 200, 100, 0.5)';
+    ctx.lineWidth   = 1.5;
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.stroke();
+    ctx.restore();
+
+    // 경고 아이콘 (느낌표)
+    ctx.save();
+    ctx.font         = `bold 40px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle    = 'rgba(255, 210, 80, 0.9)';
+    ctx.fillText('⚠', W / 2, panelY + 52);
+    ctx.restore();
+
+    // 질문 텍스트 (2줄)
+    const lines = ['정말 이동하시겠습니까?', '현재 위치가 저장되지 않습니다.'];
+    lines.forEach((line, i) => {
+        ctx.save();
+        ctx.font         = `bold ${i === 0 ? 36 : 28}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(line, W / 2, panelY + 108 + i * 46);
+        ctx.fillStyle    = i === 0 ? 'rgba(220, 235, 255, 1)' : 'rgba(180, 195, 230, 0.85)';
+        ctx.fillText(line,   W / 2, panelY + 108 + i * 46);
+        ctx.restore();
+    });
+
+    // 버튼 2개: 이동 / 취소
+    const confirmBtns = [
+        { label: '이동',  id: 'confirm_yes' },
+        { label: '취소',  id: 'confirm_no'  },
+    ];
+    const btnW   = 200;
+    const btnH   = 58;
+    const btnGap = 28;
+    const totalBtnsW = btnW * 2 + btnGap;
+    const startBtnX  = (W - totalBtnsW) / 2;
+    const btnY       = panelY + panelH - 90;
+
+    confirmBtns.forEach((btn, i) => {
+        const bx      = startBtnX + i * (btnW + btnGap);
+        const hovered = pauseMenu.hoveredBtn === 20 + i;
+        const isYes   = btn.id === 'confirm_yes';
+
+        ctx.save();
+        if (hovered) {
+            ctx.fillStyle   = isYes ? 'rgba(200, 120, 40, 0.45)' : 'rgba(50, 70, 130, 0.45)';
+            ctx.shadowColor = isYes ? 'rgba(255, 180, 80, 0.5)' : 'rgba(120, 160, 255, 0.5)';
+            ctx.shadowBlur  = 18 * DPR;
+        } else {
+            ctx.fillStyle = 'rgba(20, 26, 50, 0.75)';
+        }
+        _pauseRoundRect(bx, btnY, btnW, btnH, 10);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = hovered
+            ? (isYes ? 'rgba(255, 200, 100, 0.8)' : 'rgba(160, 200, 255, 0.8)')
+            : 'rgba(160, 200, 255, 0.3)';
+        ctx.lineWidth = 1.5;
+        _pauseRoundRect(bx, btnY, btnW, btnH, 10);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.font         = `bold 32px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 4;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(btn.label, bx + btnW / 2, btnY + btnH / 2);
+        ctx.fillStyle = hovered
+            ? (isYes ? 'rgba(255, 225, 140, 1)' : 'rgba(220, 240, 255, 1)')
+            : 'rgba(190, 215, 255, 0.95)';
+        ctx.fillText(btn.label, bx + btnW / 2, btnY + btnH / 2);
+        ctx.restore();
+
+        btn._x = bx; btn._y = btnY; btn._w = btnW; btn._h = btnH;
+    });
+
+    pauseMenu._confirmBtns = confirmBtns;
+}
+
+function _drawPauseSettings(W, H) {
+    const panelW = 580;
+    const panelH = 480;
+    const panelX = (W - panelW) / 2;
+    const panelY = (H - panelH) / 2;
+
+    // 패널 배경
+    ctx.save();
+    ctx.shadowColor = 'rgba(140, 180, 255, 0.22)';
+    ctx.shadowBlur  = 40 * DPR;
+    ctx.fillStyle   = 'rgba(6, 8, 20, 0.97)';
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.45)';
+    ctx.lineWidth   = 1.5;
+    _pauseRoundRect(panelX, panelY, panelW, panelH, 18);
+    ctx.stroke();
+    ctx.restore();
+
+    // 타이틀
+    ctx.save();
+    ctx.font         = `bold 48px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle  = 'rgba(0,0,0,0.95)';
+    ctx.lineWidth    = 6;
+    ctx.lineJoin     = 'round';
+    ctx.strokeText('설정', W / 2, panelY + 64);
+    ctx.fillStyle = 'rgba(210, 230, 255, 1)';
+    ctx.fillText('설정',   W / 2, panelY + 64);
+    ctx.restore();
+
+    // 구분선
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.2)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 40, panelY + 100);
+    ctx.lineTo(panelX + panelW - 40, panelY + 100);
+    ctx.stroke();
+    ctx.restore();
+
+    // 슬라이더 정의
+    const sliders = [
+        { label: '마스터',   key: 'masterVolume', val: pauseMenu.masterVolume },
+        { label: '배경음악', key: 'bgmVolume',    val: pauseMenu.bgmVolume    },
+        { label: '효과음',   key: 'sfxVolume',    val: pauseMenu.sfxVolume    },
+    ];
+
+    const labelW       = 130;   // 레이블 영역
+    const pctW         = 72;    // 퍼센트 텍스트 영역
+    const padL         = 40;    // 패널 좌측 여백
+    const padR         = 40;    // 패널 우측 여백
+    const sliderX      = panelX + padL + labelW;
+    const sliderTrackW = panelW - padL - labelW - pctW - padR;
+    const sliderTrackH = 10;
+    const knobR        = 14;
+    const startY       = panelY + 148;
+    const rowGap       = 100;
+
+    sliders.forEach((sl, i) => {
+        const rowY      = startY + i * rowGap;
+        const trackY    = rowY + 20;
+        const fillW     = sl.val * sliderTrackW;
+        const knobX     = sliderX + fillW;
+        const knobY     = trackY + sliderTrackH / 2;
+        const isDragging = pauseMenu.dragging === sl.key;
+
+        // 레이블
+        ctx.save();
+        ctx.font         = `bold 32px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth    = 4;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(sl.label, panelX + padL, trackY + sliderTrackH / 2);
+        ctx.fillStyle    = 'rgba(200, 220, 255, 0.95)';
+        ctx.fillText(sl.label, panelX + padL, trackY + sliderTrackH / 2);
+        ctx.restore();
+
+        // 트랙 배경
+        ctx.save();
+        ctx.fillStyle = 'rgba(30, 40, 70, 0.9)';
+        roundRect(ctx, sliderX, trackY, sliderTrackW, sliderTrackH, 5);
+        ctx.fill();
+        ctx.restore();
+
+        // 채워진 부분
+        ctx.save();
+        ctx.fillStyle = isDragging
+            ? 'rgba(160, 210, 255, 0.95)'
+            : 'rgba(120, 170, 240, 0.85)';
+        if (fillW > 0) {
+            roundRect(ctx, sliderX, trackY, fillW, sliderTrackH, 5);
+            ctx.fill();
+        }
+        ctx.restore();
+
+        // 노브
+        ctx.save();
+        if (isDragging) {
+            ctx.shadowColor = 'rgba(160, 210, 255, 0.7)';
+            ctx.shadowBlur  = 14 * DPR;
+        }
+        ctx.fillStyle = isDragging ? 'rgba(220, 240, 255, 1)' : 'rgba(180, 215, 255, 0.95)';
+        ctx.beginPath();
+        ctx.arc(knobX, knobY, knobR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(100, 150, 230, 0.6)';
+        ctx.lineWidth   = 2;
+        ctx.stroke();
+        ctx.restore();
+
+        // 퍼센트 표시
+        ctx.save();
+        ctx.font         = `bold 26px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle    = 'rgba(170, 200, 255, 0.8)';
+        ctx.fillText(`${Math.round(sl.val * 100)}%`, sliderX + sliderTrackW + 18, knobY);
+        ctx.restore();
+
+        // 히트 영역 저장 (클릭/드래그 판정)
+        sl._trackX = sliderX;
+        sl._trackY = trackY;
+        sl._trackW = sliderTrackW;
+        sl._trackH = sliderTrackH;
+        sl._knobX  = knobX;
+        sl._knobY  = knobY;
+        sl._knobR  = knobR;
+    });
+
+    pauseMenu._sliders = sliders;
+
+    // 뒤로 가기 버튼
+    const backW = 200, backH = 54;
+    const backX = (W - backW) / 2;
+    const backY = panelY + panelH - 82;
+    const backHovered = pauseMenu.hoveredBtn === 10;
+
+    ctx.save();
+    ctx.fillStyle = backHovered ? 'rgba(80, 120, 210, 0.35)' : 'rgba(20, 26, 50, 0.75)';
+    if (backHovered) { ctx.shadowColor = 'rgba(120,170,255,0.5)'; ctx.shadowBlur = 18 * DPR; }
+    _pauseRoundRect(backX, backY, backW, backH, 10);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = backHovered ? 'rgba(160,200,255,0.75)' : 'rgba(160,200,255,0.3)';
+    ctx.lineWidth   = 1.5;
+    _pauseRoundRect(backX, backY, backW, backH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font         = `bold 30px ${DIALOGUE_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth    = 4;
+    ctx.lineJoin     = 'round';
+    ctx.strokeText('← 뒤로', backX + backW / 2, backY + backH / 2);
+    ctx.fillStyle = backHovered ? 'rgba(220,240,255,1)' : 'rgba(190,215,255,0.95)';
+    ctx.fillText('← 뒤로',   backX + backW / 2, backY + backH / 2);
+    ctx.restore();
+
+    pauseMenu._backBtn = { x: backX, y: backY, w: backW, h: backH };
+}
+
+// ── 마우스 이벤트 ─────────────────────────────────────────────────
+canvas.addEventListener('mousemove', (e) => {
+    if (!pauseMenu.active) return;
+    const pos = canvasLogicalPos(e);
+
+    // 드래그 중이면 슬라이더 값 갱신
+    if (pauseMenu.dragging && pauseMenu._sliders) {
+        const sl = pauseMenu._sliders.find(s => s.key === pauseMenu.dragging);
+        if (sl) {
+            const raw = (pos.x - sl._trackX) / sl._trackW;
+            pauseMenu[sl.key] = Math.max(0, Math.min(1, raw));
+            pauseMenu.applyVolumes();
+        }
+        return;
+    }
+
+    pauseMenu.hoveredBtn = -1;
+
+    if (pauseMenu.screen === 'main' && pauseMenu._mainBtns) {
+        pauseMenu._mainBtns.forEach((btn, i) => {
+            if (pos.x >= btn._x && pos.x <= btn._x + btn._w &&
+                pos.y >= btn._y && pos.y <= btn._y + btn._h) {
+                pauseMenu.hoveredBtn = i;
+            }
+        });
+    } else if (pauseMenu.screen === 'confirm_save' && pauseMenu._confirmBtns) {
+        pauseMenu._confirmBtns.forEach((btn, i) => {
+            if (pos.x >= btn._x && pos.x <= btn._x + btn._w &&
+                pos.y >= btn._y && pos.y <= btn._y + btn._h) {
+                pauseMenu.hoveredBtn = 20 + i;
+            }
+        });
+    } else if (pauseMenu.screen === 'settings') {
+        if (pauseMenu._backBtn) {
+            const b = pauseMenu._backBtn;
+            if (pos.x >= b.x && pos.x <= b.x + b.w &&
+                pos.y >= b.y && pos.y <= b.y + b.h) {
+                pauseMenu.hoveredBtn = 10;
+            }
+        }
+    }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    if (!pauseMenu.active) return;
+    if (e.button !== 0) return;
+    const pos = canvasLogicalPos(e);
+
+    if (pauseMenu.screen === 'settings' && pauseMenu._sliders) {
+        for (const sl of pauseMenu._sliders) {
+            // 노브 또는 트랙 클릭
+            const onKnob  = Math.hypot(pos.x - sl._knobX, pos.y - sl._knobY) <= sl._knobR + 8;
+            const onTrack = pos.x >= sl._trackX && pos.x <= sl._trackX + sl._trackW &&
+                            pos.y >= sl._trackY - 12 && pos.y <= sl._trackY + sl._trackH + 12;
+            if (onKnob || onTrack) {
+                pauseMenu.dragging = sl.key;
+                const raw = (pos.x - sl._trackX) / sl._trackW;
+                pauseMenu[sl.key] = Math.max(0, Math.min(1, raw));
+                pauseMenu.applyVolumes();
+                return;
+            }
+        }
+    }
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (pauseMenu.dragging) {
+        pauseMenu.dragging = null;
+    }
+});
+
+canvas.addEventListener('click', (e) => {
+    if (!pauseMenu.active) return;
+    if (pauseMenu.dragging) return;   // 드래그 종료 후 클릭 오발 방지
+    const pos = canvasLogicalPos(e);
+
+    if (pauseMenu.screen === 'main' && pauseMenu._mainBtns) {
+        pauseMenu._mainBtns.forEach((btn, i) => {
+            if (pos.x >= btn._x && pos.x <= btn._x + btn._w &&
+                pos.y >= btn._y && pos.y <= btn._y + btn._h) {
+                _handlePauseMainClick(btn.id);
+            }
+        });
+    } else if (pauseMenu.screen === 'confirm_save' && pauseMenu._confirmBtns) {
+        pauseMenu._confirmBtns.forEach((btn) => {
+            if (pos.x >= btn._x && pos.x <= btn._x + btn._w &&
+                pos.y >= btn._y && pos.y <= btn._y + btn._h) {
+                if (btn.id === 'confirm_yes') {
+                    pauseMenu.close();
+                    bgmPlayer.stop(false);
+                    pauseMenu.fadePhase = 'fadeOut';
+                    pauseMenu.fadeTimer = 0;
+                    pauseMenu.fadeAlpha = 0;
+                } else {
+                    pauseMenu.screen = 'main';
+                    pauseMenu.hoveredBtn = -1;
+                }
+            }
+        });
+    } else if (pauseMenu.screen === 'settings') {
+        if (pauseMenu._backBtn) {
+            const b = pauseMenu._backBtn;
+            if (pos.x >= b.x && pos.x <= b.x + b.w &&
+                pos.y >= b.y && pos.y <= b.y + b.h) {
+                pauseMenu.screen = 'main';
+                pauseMenu.hoveredBtn = -1;
+            }
+        }
+    }
+});
+
+function _handlePauseMainClick(id) {
+    if (id === 'resume') {
+        pauseMenu.close();
+    } else if (id === 'settings') {
+        pauseMenu.screen = 'settings';
+        pauseMenu.hoveredBtn = -1;
+    } else if (id === 'goto_save') {
+        // 확인 화면으로 전환 (이동은 confirm_yes에서 처리)
+        pauseMenu.screen = 'confirm_save';
+        pauseMenu.hoveredBtn = -1;
+    }
+}
 
 function loadAssets(callback) {
     const imgKeys = Object.keys(ASSETS);
@@ -274,7 +928,7 @@ function loadAssets(callback) {
         const { src, volume } = SOUNDS[key];
         const audio = new Audio(src);
         audio.preload = 'auto';
-        audio.volume  = volume;
+        audio.volume  = Math.min(1, volume * pauseMenu.sfxVolume * pauseMenu.masterVolume);
         sounds[key]   = audio;
         audio.addEventListener('canplaythrough', () => {
             loaded++;
@@ -304,10 +958,10 @@ function playSoundImmediate(key) {
     clone.play().catch(() => {});
 }
 // [SECTION 3] 입력 감지 (Input Control)
-const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false, q: false, qPressed: false, u: false, uPressed: false, i: false, iPressed: false };
+const keys = { a: false, d: false, s: false, w: false, space: false, spacePressed: false, mouseLeft: false, mouseLeftPressed: false, q: false, qPressed: false, u: false, uPressed: false, i: false, iPressed: false, f: false, fPressed: false };
 
 let audioUnlocked = false;
-let audioMuted    = true;
+let audioMuted    = false;
 function unlockAudio() {
     if (audioUnlocked) return;
     audioUnlocked = true;
@@ -320,14 +974,13 @@ function unlockAudio() {
             snd.volume = v;
         }).catch(() => {});
     });
-    // 언락 후 BGM 시작 (뮤트 상태 반영)
+    // 언락 후 BGM 시작
     bgmPlayer.play('BGM1');
-    if (bgmPlayer.current) bgmPlayer.current.muted = audioMuted;
-    Object.values(sounds).forEach(snd => { snd.muted = audioMuted; });
 }
 
 window.addEventListener('mousedown', (e) => {
     unlockAudio();
+    if (pauseMenu.active) return;   // 일시정지 중 게임 입력 차단
     if (e.button === 0) {
         keys.mouseLeft = true;
         keys.mouseLeftPressed = true;
@@ -349,6 +1002,23 @@ window.addEventListener('mouseup', (e) => {
 });
 window.addEventListener('keydown', (e) => {
     unlockAudio();
+    // ── ESC 먼저 처리 ──
+    if (e.key === 'Escape') {
+        if (pauseMenu.active && pauseMenu.screen === 'settings') {
+            pauseMenu.screen = 'main';
+        } else if (pauseMenu.active && pauseMenu.screen === 'confirm_save') {
+            pauseMenu.screen = 'main';
+            pauseMenu.hoveredBtn = -1;
+        } else if (pauseMenu.active) {
+            pauseMenu.close();
+        } else if (!isDeathActive() && pauseMenu.fadePhase === 'none') {
+            pauseMenu.open();
+        }
+        return;
+    }
+    // ── 일시정지 중 나머지 키 차단 ──
+    if (pauseMenu.active || pauseMenu.fadePhase !== 'none') return;
+
     const key = e.key.toLowerCase();
     if (key === 'a') keys.a = true;
     if (key === 'd') keys.d = true;
@@ -359,7 +1029,16 @@ window.addEventListener('keydown', (e) => {
         keys.spacePressed = true;
     }
     if (key === 'e') handleEKey();
-    if (key === 'f') handleFKey();
+    if (key === 'f') {
+        if (dialogue.active) {
+            // 대화 중: 꾹 눌러도 빠르게 넘기기 허용 (fPressed 가드 없음)
+            handleFKey();
+        } else if (!keys.fPressed) {
+            // 대화 밖: 최초 1회만 실행 (sign/NPC 무한 트리거 방지)
+            keys.fPressed = true;
+            handleFKey();
+        }
+    }
     // 테스트용 단축키: 1 = 튜토리얼 맵(2번)으로 즉시 이동
     if (key === '1') {
         projectile.reset();
@@ -377,11 +1056,110 @@ window.addEventListener('keydown', (e) => {
         loadMap(3);
         _snapCameraToPlayer();
     }
+    // 테스트용 단축키: 3 = 맵4로 즉시 이동
+    if (key === '3') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(4);
+        player.x = 400; player.y = 570; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 4 = 맵5로 즉시 이동
+    if (key === '4') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(5);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 5 = 맵6으로 즉시 이동
+    if (key === '5') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(6);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 6 = 맵7로 즉시 이동
+    if (key === '6') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(7);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 7 = 맵8(세이브포인트)으로 즉시 이동
+    if (key === '7') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(8);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 8 = 맵9(세이브 이후 구간1)로 즉시 이동
+    if (key === '8') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(9);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 9 = 맵10으로 즉시 이동
+    if (key === '9') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(10);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: 0 = 맵11로 즉시 이동
+    if (key === '0') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(11);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: - = 맵12로 즉시 이동
+    if (key === '-') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(12);
+        player.x = 80; player.y = 580; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
+    // 테스트용 단축키: = = 맵13(보스방)으로 즉시 이동
+    if (key === '=') {
+        projectile.reset();
+        introSeq.phase = 'idle';
+        SCALE = BASE_SCALE;
+        loadMap(13);
+        player.x = 120; player.y = 940; player.dx = 0; player.dy = 0;
+        player.grounded = false;
+        _snapCameraToPlayer();
+    }
     if (key === 'q' && !keys.qPressed) { keys.q = true; keys.qPressed = true; handleQKey(); }
-    if (key === 'm') {
-        audioMuted = !audioMuted;
-        if (bgmPlayer.current) bgmPlayer.current.muted = audioMuted;
-        Object.values(sounds).forEach(snd => { snd.muted = audioMuted; });
+    // C = 보스 2페이즈 전환 테스트 (맵13 한정)
+    if (key === 'c' && currentMapIndex === 13) {
+        bossPhase2.trigger();
     }
     // U = 좌클릭과 동일
     if (key === 'u' && !keys.uPressed) {
@@ -409,6 +1187,7 @@ window.addEventListener('keyup', (e) => {
     if (key === 's') keys.s = false;
     if (key === 'w') keys.w = false;
     if (key === ' ') { keys.space = false; keys.spacePressed = false; }
+    if (key === 'f') { keys.f = false; keys.fPressed = false; }
     if (key === 'q') { keys.q = false; keys.qPressed = false; }
     // U 떼면 좌클릭도 해제
     if (key === 'u') {
@@ -443,6 +1222,7 @@ const player = {
     gauge: 0, maxGauge: 100,
     gaugePerHit: 10,
     thornsPushTimer: 0,   // 덩굴에 튕긴 직후 오른쪽 이동 억제 타이머
+    pitLaunchTimer: 0,    // 구덩이에서 솟구친 직후 오른쪽 dx 강제 유지 타이머
 
     // 필살기 연출 상태
     ultPhase: 'none',   // 'none' | 'vanish' | 'hidden' | 'camMove' | 'fire'
@@ -550,7 +1330,7 @@ const MAP_DATA = [
         platforms: [
             { x: 0,    y: 670, width: 3000, height: 50,  type: 'solid' },
             { x: -60,  y: 0,   width: 60,   height: 520, type: 'wall'  },
-            { x: 3000, y: 0,   width: 60,   height: 720, type: 'wall'  },
+            { x: 3000, y: 0,   width: 60,   height: 600, type: 'wall'  },
             { x: 400,  y: 500, width: 200,  height: 20,  type: 'platform' },
             { x: 800,  y: 380, width: 250,  height: 20,  type: 'platform' },
             { x: 1300, y: 280, width: 200,  height: 20,  type: 'platform' }
@@ -599,7 +1379,7 @@ MAP_DATA.push({
     id: 2,
     worldWidth:  8000,
     worldHeight: 800,
-    bgColor: '#d4e8f5',
+    bgColor: '#654321',
     spawnX: 820,
     spawnY: 560,                 // 바닥y=640, 플레이어 높이=80
 
@@ -668,6 +1448,160 @@ let dummies   = [];
 
 // 한 번 클리어한 맵은 영구 기록 (리젠돼도 출입구 유지)
 const clearedMaps = new Set();
+let bossMapReached = false;  // 보스맵(맵13) 최초 도달 여부
+let savepointReached = false;  // 세이브포인트(맵8) 도달 여부
+
+// ── 보스 2페이즈 전환 연출 ────────────────────────────────────────────
+const bossPhase2 = {
+    active:      false,
+    playing:     false,
+    blackScreen: false,  // 영상 로딩 중 검정화면 강제
+    fadeIn:      false,
+    fadeAlpha:   0.65,
+    FADE_STEP:   0.04,
+
+    _video: null,
+
+    get video() {
+        if (!this._video) {
+            const v = document.createElement('video');
+            v.src     = './assets/images/background_change.mp4';
+            v.preload = 'auto';
+            v.muted   = false;
+            v.style.display = 'none';
+            document.body.appendChild(v);
+            v.addEventListener('ended', () => {
+                this.playing     = false;
+                this.blackScreen = false;
+                this.fadeIn      = true;
+                this.fadeAlpha   = 0.65;
+            });
+            this._video = v;
+        }
+        return this._video;
+    },
+
+    trigger() {
+        if (this.active || this.playing) return;
+        // 즉시 검정화면으로 전환 (로딩 중 깜빡임 방지)
+        this.blackScreen = true;
+        this.playing     = false;
+        this.fadeIn      = false;
+        this.fadeAlpha   = 0.65;
+
+        const v = this.video;   // _video 미리 생성
+        v.currentTime = 0;
+
+        const doPlay = () => {
+            this.playing     = true;
+            this.blackScreen = false;
+            v.play().catch(() => {
+                this.playing     = false;
+                this.blackScreen = false;
+                this.fadeIn      = true;
+                this.fadeAlpha   = 0.65;
+            });
+        };
+
+        if (v.readyState >= 4) {
+            doPlay();
+        } else {
+            v.addEventListener('canplaythrough', doPlay, { once: true });
+            v.load();
+        }
+    },
+
+    // update()는 draw 루프에서 매 프레임 호출
+    updateFade() {
+        if (!this.fadeIn) return;
+        this.fadeAlpha = Math.max(this.fadeAlpha - this.FADE_STEP, 0);
+        if (this.fadeAlpha <= 0) {
+            this.fadeIn  = false;
+            this.active  = true;   // 페이드 완료 → BG_BOSS 확정
+        }
+    },
+
+    reset() {
+        this.active      = false;
+        this.playing     = false;
+        this.blackScreen = false;
+        this.fadeIn      = false;
+        this.fadeAlpha   = 0.65;
+        if (this._video) {
+            this._video.pause();
+            this._video.currentTime = 0;
+        }
+    },
+};
+const savepointHint = {
+    active:        false,   // 현재 표시 중
+    shown:         false,   // 최초 1회 힌트를 표시했는지 (게임 전체에서)
+    dialogueDone:  false,   // 최초 NPC 대화가 끝났는지
+    blinkTimer:    0,
+};
+
+// 세이브포인트 회복 이펙트 (초록 파티클)
+const savepointEffect = {
+    active:    false,
+    particles: [],
+    timer:     0,
+    duration:  80,   // 이펙트 총 지속 프레임
+    pending:   false, // 맵 전환 완료 후 발동 대기
+
+    trigger() {
+        this.active    = true;
+        this.timer     = 0;
+        this.particles = [];
+        // 플레이어 주위에 초록 파티클 생성
+        for (let i = 0; i < 8; i++) {
+            const angle  = (Math.PI * 2 / 8) * i + (Math.random() - 0.5) * 0.4;
+            const speed  = 1.8 + Math.random() * 2.5;
+            this.particles.push({
+                x:     player.x + player.width  / 2,
+                y:     player.y + player.height / 2,
+                dx:    Math.cos(angle) * speed,
+                dy:    Math.sin(angle) * speed - 1.5,
+                life:  1.0,
+                decay: 0.018 + Math.random() * 0.012,
+                size:  4 + Math.random() * 5,
+            });
+        }
+        // HP 즉시 최대 회복
+        player.hp = player.maxHp;
+    },
+
+    update() {
+        if (!this.active) return;
+        this.timer++;
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.x   += p.dx;
+            p.y   += p.dy;
+            p.dy  += 0.08;   // 살짝 중력
+            p.life -= p.decay;
+            if (p.life <= 0) this.particles.splice(i, 1);
+        }
+        if (this.timer >= this.duration && this.particles.length === 0) {
+            this.active = false;
+        }
+    },
+
+    draw() {
+        if (!this.active) return;
+        this.particles.forEach(p => {
+            ctx.save();
+            ctx.globalAlpha = Math.max(p.life, 0);
+            // 초록 계열 글로우
+            ctx.shadowColor = 'rgba(80, 255, 120, 0.9)';
+            ctx.shadowBlur  = 8 * DPR;
+            ctx.fillStyle   = `rgba(${Math.floor(60 + (1 - p.life) * 80)}, 255, ${Math.floor(100 + p.life * 80)}, 1)`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        });
+    }
+};
 
 function isMapCleared(mapIndex) {
     if (clearedMaps.has(mapIndex)) return true;
@@ -685,12 +1619,23 @@ function loadMap(mapIndex) {
     currentMapIndex = mapIndex;
     world.width     = map.worldWidth;
     world.height    = map.worldHeight;
+    // 보스맵 벗어날 때 체력바 숨김 + 보스BGM 정지 후 일반BGM 복구
+    if (mapIndex !== 13 && typeof bossHpBar !== 'undefined') {
+        bossHpBar.visible    = false;
+        bossHpBar.introPhase = 'idle';
+        if (typeof bossPhase2 !== 'undefined') bossPhase2.reset();
+        if (bgmPlayer.currentKey === 'BGM_BOSS1') {
+            bgmPlayer.stop(false);
+            bgmPlayer.play('BGM1', true);
+        }
+    }
     platforms       = map.platforms;
     signs           = map.signs;
     spikes          = map.spikes || [];
 
     // 맵2는 한 번 클리어하면 적 리스폰 없음
-    if (mapIndex === 2 && map2Events.killMonologueDone) {
+    if ((map.keepClearedEnemiesDead && clearedMaps.has(mapIndex)) ||
+        (mapIndex === 2 && map2Events.killMonologueDone)) {
         enemies = [];
     } else {
         enemies = (map.enemies || []).map(e => createEnemy(e.type, e.x, e.y, e));
@@ -742,19 +1687,260 @@ function loadMap(mapIndex) {
         }
     }
 
+    // 세이브포인트(맵8) 방문 시 플래그 활성화
+    if (mapIndex === 8) {
+        savepointReached = true;
+    } else {
+        // 다른 맵으로 이동하면 힌트 숨김
+        savepointHint.active = false;
+    }
+
     // 맵 진입 이벤트 실행
     if (map.onEnter) map.onEnter();
 }
 // [SECTION 6] 물리 연산 및 업데이트 (Update Logic)
+// ══════════════════════════════════════════════════════════════════
+// [DEATH SYSTEM] 사망 연출 시퀀스
+// phase: 'idle' → 'closeup' → 'fall_down' → 'wake_up' → 'fadeOut' → 'done'
+// ══════════════════════════════════════════════════════════════════
+const deathSeq = {
+    phase:       'idle',
+    timer:       0,
+
+    CLOSEUP_SCALE:    BASE_SCALE * 2.2,
+    CLOSEUP_DURATION: 20,   // 줌인
+    WAKEUP_DURATION:  35,   // wake_up 먼저
+    FALL_DURATION:    45,   // 이후 fall_down
+    FADEOUT_DURATION: 45,   // 암전
+
+    fadeAlpha:   0,
+    savedScale:  1,
+};
+
+function triggerDeath() {
+    if (deathSeq.phase !== 'idle') return;
+
+    bgmPlayer.stop(false);
+    Object.values(sounds).forEach(s => { s.pause(); s.currentTime = 0; });
+
+    deathSeq.savedScale = SCALE;
+    deathSeq.phase      = 'closeup';
+    deathSeq.timer      = 0;
+    deathSeq.fadeAlpha  = 0;
+
+    player.dx           = 0;
+    player.dy           = 0;
+    player.isAttacking  = false;
+    player.attackTimer  = 0;
+    player.isDashing    = false;
+    player.isInvincible = false;
+}
+
+function updateDeathSeq() {
+    if (deathSeq.phase === 'idle') return;
+    deathSeq.timer++;
+
+    if (deathSeq.phase === 'closeup') {
+        const t    = Math.min(deathSeq.timer / deathSeq.CLOSEUP_DURATION, 1);
+        const ease = t * t * (3 - 2 * t);
+        SCALE = deathSeq.savedScale + (deathSeq.CLOSEUP_SCALE - deathSeq.savedScale) * ease;
+        _snapCameraToPlayer();
+        if (t >= 1) {
+            deathSeq.phase = 'wake_up';   // ① wake_up 먼저
+            deathSeq.timer = 0;
+        }
+
+    } else if (deathSeq.phase === 'wake_up') {
+        _snapCameraToPlayer();
+        if (deathSeq.timer >= deathSeq.WAKEUP_DURATION) {
+            deathSeq.phase = 'fall_down'; // ② 이후 fall_down
+            deathSeq.timer = 0;
+        }
+
+    } else if (deathSeq.phase === 'fall_down') {
+        _snapCameraToPlayer();
+        if (deathSeq.timer >= deathSeq.FALL_DURATION) {
+            deathSeq.phase = 'fadeOut';
+            deathSeq.timer = 0;
+        }
+
+    } else if (deathSeq.phase === 'fadeOut') {
+        deathSeq.fadeAlpha = Math.min(deathSeq.timer / deathSeq.FADEOUT_DURATION, 1);
+        if (deathSeq.timer >= deathSeq.FADEOUT_DURATION) {
+            _applyDeath();
+            deathSeq.phase     = 'fadeIn';
+            deathSeq.timer     = 0;
+            deathSeq.fadeAlpha = 1;
+        }
+
+    } else if (deathSeq.phase === 'fadeIn') {
+        deathSeq.fadeAlpha = Math.max(1 - deathSeq.timer / deathSeq.FADEOUT_DURATION, 0);
+        if (deathSeq.timer >= deathSeq.FADEOUT_DURATION) {
+            deathSeq.fadeAlpha = 0;
+            deathSeq.phase     = 'idle';
+            SCALE = BASE_SCALE;
+            _snapCameraToPlayer();
+            // BGM 재시작
+            bgmPlayer.play('BGM1', true);
+        }
+    }
+}
+
+function _applyDeath() {
+    // ── 맵 클리어 상태만 보존, 나머지 리셋 ──────────────────────
+    const savedCleared = new Set(clearedMaps);
+
+    // map2Events 이벤트 플래그 리셋 (인트로는 이미 봤으므로 introPlayed 유지)
+    const savedIntroPlayed = map2Events.introPlayed;
+    Object.keys(map2Events).forEach(k => { map2Events[k] = false; });
+    map2Events.introPlayed = savedIntroPlayed;
+
+    // combatTutorial 리셋
+    combatTutorial.dialogueShown     = false;
+    combatTutorial.hintActive        = false;
+    combatTutorial.hintShown         = false;
+    combatTutorial.blinkTimer        = 0;
+    combatTutorial.cutPhase          = 'idle';
+    combatTutorial.cutTimer          = 0;
+    combatTutorial.cutTriggered      = false;
+    combatTutorial.killMonologueDone = false;
+
+    // 투사체 리셋
+    projectile.reset();
+    player.lastTeleportTime = 0;
+
+    // 부활 위치: 보스맵 도달 → 맵12 오른쪽 포탈 근처, 세이브포인트 → 맵8, 기본 → 맵2
+    const respawnMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : 2);
+    const respawnMap      = MAP_DATA[respawnMapIndex];
+    loadMap(respawnMapIndex);
+
+    // 클리어 상태 복원
+    clearedMaps.clear();
+    savedCleared.forEach(id => clearedMaps.add(id));
+
+    // 플레이어 상태 리셋
+    // 보스맵 도달 시 맵12 오른쪽 포탈(x=2840) 앞에 스폰
+    player.x            = bossMapReached ? 2600 : respawnMap.spawnX;
+    player.y            = respawnMap.spawnY;
+    player.dx           = 0;
+    player.dy           = 0;
+    player.hp           = player.maxHp;
+    player.gauge        = 0;
+    player.isInvincible = false;
+    player.invincibleTimer = 0;
+    player.isDashing    = false;
+    player.isAttacking  = false;
+    player.attackTimer  = 0;
+    player.jumpCount    = 0;
+    player.grounded     = true;
+    player.ultPhase     = 'none';
+    player.direction    = 'right';
+    SCALE = BASE_SCALE;
+    _snapCameraToPlayer();
+}
+
+function drawDeathOverlay() {
+    if (deathSeq.phase === 'idle') return;
+    if (deathSeq.fadeAlpha <= 0) return;
+    // 캔버스 전체에 암전 오버레이 (SCALE 변환 밖에서 그림)
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = `rgba(0,0,0,${deathSeq.fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+}
+
+// 사망 연출 중 플레이어 스프라이트 키 반환
+function getDeathPlayerKey() {
+    if (deathSeq.phase === 'closeup' || deathSeq.phase === 'wake_up') return 'PLAYER_WAKE_UP';
+    if (deathSeq.phase === 'fall_down' || deathSeq.phase === 'fadeOut' || deathSeq.phase === 'fadeIn') return 'PLAYER_FALL_DOWN';
+    return null;
+}
+
+function isDeathActive() {
+    return deathSeq.phase !== 'idle';
+}
+
 function update() {
+    // ── 세이브포인트 이동 암전 연출 (일시정지 해제 후) ────────────────
+    if (pauseMenu.fadePhase !== 'none') {
+        pauseMenu.fadeTimer++;
+        if (pauseMenu.fadePhase === 'fadeOut') {
+            pauseMenu.fadeAlpha = Math.min(pauseMenu.fadeTimer / pauseMenu.FADE_DUR, 1);
+            if (pauseMenu.fadeTimer >= pauseMenu.FADE_DUR) {
+                // 완전 암전 → 실제 이동 수행
+                const destMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : 2);
+                const destMap = MAP_DATA[destMapIndex];
+                loadMap(destMapIndex);
+                player.x = bossMapReached ? 2600 : destMap.spawnX;
+                player.y = destMap.spawnY;
+                player.dx = 0; player.dy = 0;
+                player.grounded = true;
+                SCALE = BASE_SCALE;
+                _snapCameraToPlayer();
+                pauseMenu.fadePhase = 'fadeIn';
+                pauseMenu.fadeTimer = 0;
+            }
+        } else if (pauseMenu.fadePhase === 'fadeIn') {
+            pauseMenu.fadeAlpha = Math.max(1 - pauseMenu.fadeTimer / pauseMenu.FADE_DUR, 0);
+            if (pauseMenu.fadeTimer >= pauseMenu.FADE_DUR) {
+                pauseMenu.fadeAlpha = 0;
+                pauseMenu.fadePhase = 'none';
+                // BGM 재개
+                bgmPlayer.play('BGM1', true);
+            }
+        }
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
+    // ── 일시정지 중 ────────────────────────────────────────────────
+    if (pauseMenu.active) {
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
+    // ── 사망 연출 중 ─────────────────────────────────────────────
+    if (isDeathActive()) {
+        updateDeathSeq();
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
+    // ── HP 0 감지 → 사망 연출 시작 ────────────────────────────────
+    if (player.hp <= 0) {
+        triggerDeath();
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
     updateDialogue();
     updateAfterimages();
     if (player.isDashing) createAfterimage();
+    updateSavepointMap();
 
     // 튜토리얼 인트로 연출 업데이트 (항상 실행)
     updateTutorialIntro();
     // 전투 컷신 업데이트 (항상 실행 — SCALE·카메라 제어)
     updateCombatCutscene();
+
+    // 천장 전환 업데이트 (맵3→4) 및 맵4 구멍 낙하 체크
+    updateCeilingTransition();
+
+    // 천장 전환 암전 중 — 물리/입력 차단 (점프 모션 유지)
+    if (ceilingTransition.active && ceilingTransition.phase === 'fadeOut') {
+        player.dx = 0;
+        player.dy = ceilingTransition.savedDy || player.dy;  // 상승 속도 유지
+        // y를 천장 위로 고정해서 맵 밖으로 사라지는 느낌
+        player.y = Math.min(player.y, -10);
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
 
     if (mapTransition.active) {
         updateMapTransition();
@@ -890,8 +2076,11 @@ function update() {
 
     // 6-2: 수평 이동
     if (player.thornsPushTimer > 0) player.thornsPushTimer--;
-
-    if (player.isDashing) {
+    if (player.pitLaunchTimer  > 0) {
+        player.pitLaunchTimer--;
+        player.dx = 6;   // 오른쪽 속도 강제 유지
+        player.direction = 'right';
+    } else if (player.isDashing) {
         const dashDir = (player.direction === 'right' ? 1 : -1);
         player.dx = dashDir * player.dashSpeed;
     } else {
@@ -1020,6 +2209,7 @@ function update() {
                 player.dx = 0;
             }
         } else if (type === 'solid') {
+            // ① 위에서 착지
             if (player.x + player.width  > plat.x &&
                 player.x                 < plat.x + plat.width &&
                 player.y + player.height >= plat.y &&
@@ -1032,6 +2222,23 @@ function update() {
                 player.jumpTimer = 0;
                 player.hasAirAttacked = false;
                 player.isDescending   = false;
+            }
+            // ② 좌우 막힘 (발판 위에 서있는 경우 제외)
+            const solidOverlapY = player.y + player.height > plat.y + 20 &&
+                                  player.y                 < plat.y + plat.height;
+            if (solidOverlapY) {
+                const solidOverlapX = player.x + player.width > plat.x &&
+                                      player.x                < plat.x + plat.width;
+                if (solidOverlapX) {
+                    const fromLeft  = (player.x + player.width) - plat.x;
+                    const fromRight = (plat.x + plat.width) - player.x;
+                    if (fromLeft < fromRight) {
+                        player.x = plat.x - player.width;
+                    } else {
+                        player.x = plat.x + plat.width;
+                    }
+                    player.dx = 0;
+                }
             }
         } else {
             if (player.x + player.width  > plat.x &&
@@ -1067,9 +2274,13 @@ function update() {
     // 6-8: 적 업데이트
     updateEnemies();
     updateDummies();
+    updateBossStoneParticles();
+    updateSlashEffects();
 
     // 6-9: 맵 전환 트리거 체크
     checkMapTransitions();
+    checkMap3CeilingTransition();   // 맵3 천장 → 맵4
+    checkMap4PitFall();             // 맵4 구멍 → 맵3
 
     // 6-9-1: 튜토리얼 위치 트리거 힌트
     updateTutHint();
@@ -1087,14 +2298,18 @@ function update() {
     } else {
         camera.x = player.x - logicalW / 2 + player.width / 2;
         if (camera.x < 0) camera.x = 0;
-        if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
+        if (camera.x > Math.max(0, world.width - logicalW)) camera.x = Math.max(0, world.width - logicalW);
     }
 
-    // 수직 카메라 — 플레이어 중심이 화면 중앙에 오도록 부드럽게 추적
-    const targetCamY = player.y - logicalH / 2 + player.height / 2;
-    cameraY += (targetCamY - cameraY) * 0.12;   // 0.12 = 추적 부드러움 (1.0이면 즉시)
-    if (cameraY < 0) cameraY = 0;
-    if (cameraY > world.height - logicalH) cameraY = world.height - logicalH;
+    // 수직 카메라 — 보스맵은 Y 고정 (바닥 기준), 나머지는 플레이어 추적
+    if (currentMapIndex === 13) {
+        cameraY = Math.max(0, world.height - logicalH);
+    } else {
+        const targetCamY = player.y - logicalH / 2 + player.height / 2;
+        cameraY += (targetCamY - cameraY) * 0.12;
+        if (cameraY < 0) cameraY = 0;
+        if (cameraY > Math.max(0, world.height - logicalH)) cameraY = Math.max(0, world.height - logicalH);
+    }
 
     projectile.update();
     draw();
@@ -1180,6 +2395,7 @@ function checkPlayerAttackHit() {
     });
 }
 function checkSpikes() {
+    if (isDeathActive()) return;   // 사망 연출 중 피격 차단
     for (const spike of spikes) {
         if (spike.isThorns) {
             // ── 가시덩굴 처리 ──────────────────────────────────────
@@ -1398,6 +2614,9 @@ function draw() {
 
     // 7-1: 배경
     if (currentMapIndex === 2 && sprites['BG_FOREST'] && sprites['BG_FOREST'].naturalWidth > 0) {
+        // 맵 밖(위아래)이 보여도 자연스럽도록 먼저 bgColor로 전체 채움
+        ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+        ctx.fillRect(0, 0, world.width, world.height);
         const bgImg  = sprites['BG_FOREST'];
         const bgImg2 = sprites['BG_FOREST2'] && sprites['BG_FOREST2'].naturalWidth > 0 ? sprites['BG_FOREST2'] : bgImg;
         const imgW  = bgImg.naturalWidth;
@@ -1435,6 +2654,135 @@ function draw() {
     } else if (currentMapIndex === 3) {
         ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
         ctx.fillRect(0, 0, world.width, world.height);
+    }
+
+    // 7-1c: 맵4~7, 맵9~12 배경 — BG_PLAIN 타일링 (world.height 기준 스케일)
+    if ([4, 5, 6, 7, 9, 10, 11, 12].includes(currentMapIndex)) {
+        const bgImg = sprites['BG_PLAIN'];
+        const viewWidth  = canvas.width / SCALE;
+        const viewHeight = canvas.height / SCALE;
+        const viewLeft   = camera.x;
+        const viewTop    = cameraY;
+        const viewRight  = viewLeft + viewWidth;
+
+        ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+        ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+
+        if (bgImg && bgImg.naturalWidth > 0) {
+            const imgW = bgImg.naturalWidth;
+            const imgH = bgImg.naturalHeight;
+            const scale = Math.max(viewWidth / imgW, world.height / imgH);
+            const tileW = imgW * scale;
+            const tileH = imgH * scale;
+            const drawY = viewTop + viewHeight - tileH;
+            const bgOffset = -tileW * 0.3;
+            const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
+
+            for (let tx = startX; tx < viewRight; tx += tileW) {
+                ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
+            }
+        }
+    }
+
+    // 7-1c-boss: 맵13 보스방 배경
+    if (currentMapIndex === 13) {
+        const viewWidth   = canvas.width / SCALE;
+        const viewHeight  = canvas.height / SCALE;
+        const viewLeft    = camera.x;
+        const viewTop     = cameraY;
+        const viewRight   = viewLeft + viewWidth;
+        const worldBottom = world.height;
+
+        const _drawBossBg = (alpha) => {
+            const bgImg = sprites['BG_BOSS'];
+            ctx.save();
+            if (alpha < 1) ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#0d1e35';
+            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            if (bgImg && bgImg.naturalWidth > 0) {
+                const imgW = bgImg.naturalWidth;
+                const imgH = bgImg.naturalHeight;
+                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
+                const tileW = imgW * scale;
+                const tileH = imgH * scale;
+                const drawY = worldBottom - tileH;
+                const bgOffset = -tileW * 0.3;
+                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
+                for (let tx = startX; tx < viewRight; tx += tileW) {
+                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
+                }
+            }
+            ctx.restore();
+        };
+
+        if (bossPhase2.blackScreen) {
+            // ── 로딩 중: 1페이즈 배경 그대로 유지 (검정 깜빡임 방지) ───
+            const bgImg = sprites['BG_PLAIN'];
+            ctx.fillStyle = MAP_DATA[13].bgColor;
+            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            if (bgImg && bgImg.naturalWidth > 0) {
+                const imgW = bgImg.naturalWidth;
+                const imgH = bgImg.naturalHeight;
+                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
+                const tileW = imgW * scale;
+                const tileH = imgH * scale;
+                const drawY = worldBottom - tileH;
+                const bgOffset = -tileW * 0.3;
+                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
+                for (let tx = startX; tx < viewRight; tx += tileW) {
+                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
+                }
+            }
+        } else if (bossPhase2.playing && bossPhase2._video) {
+            // ── 영상 재생 중 ────────────────────────────────────────────
+            const v = bossPhase2._video;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            const fixedY = worldBottom - viewHeight - 60;
+            if (v.readyState >= 3) {
+                ctx.drawImage(v, viewLeft, fixedY, viewWidth, viewHeight);
+            }
+        } else if (bossPhase2.fadeIn) {
+            // ── 영상 종료 후 페이드인 ────────────────────────────────────
+            bossPhase2.updateFade();
+            // 검정 깔고 그 위에 BG_BOSS를 현재 alpha로
+            ctx.fillStyle = '#000';
+            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            _drawBossBg(1 - bossPhase2.fadeAlpha);
+        } else if (bossPhase2.active) {
+            // ── 2페이즈 완료 ─────────────────────────────────────────────
+            _drawBossBg(1);
+        } else {
+            // ── 1페이즈: BG_PLAIN ─────────────────────────────────────────
+            const bgImg = sprites['BG_PLAIN'];
+            ctx.fillStyle = MAP_DATA[13].bgColor;
+            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            if (bgImg && bgImg.naturalWidth > 0) {
+                const imgW = bgImg.naturalWidth;
+                const imgH = bgImg.naturalHeight;
+                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
+                const tileW = imgW * scale;
+                const tileH = imgH * scale;
+                const drawY = worldBottom - tileH;
+                const bgOffset = -tileW * 0.3;
+                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
+                for (let tx = startX; tx < viewRight; tx += tileW) {
+                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
+                }
+            }
+        }
+    }
+
+    // 7-1d: 맵8 배경 — 세이브포인트 (뷰포트 1280×720 꽉 채움, 카메라 고정)
+    if (currentMapIndex === 8) {
+        const bgImg = sprites['BG_SAVEPOINT'];
+        const viewWidth  = canvas.width / SCALE;
+        const viewHeight = canvas.height / SCALE;
+        ctx.fillStyle = MAP_DATA[currentMapIndex].bgColor;
+        ctx.fillRect(camera.x, cameraY, viewWidth, viewHeight);
+        if (bgImg && bgImg.naturalWidth > 0) {
+            ctx.drawImage(bgImg, camera.x, cameraY, viewWidth, viewHeight);
+        }
     }
 
 // ── 잘린 나무 그루터기 렌더링 (barrier / log 공용) ──────────────────
@@ -1647,6 +2995,13 @@ function drawStump(ctx, x, y, w, h) {
                         ctx.fillRect(bx2, plat.y + 2, 8, 3);
                     }
                 }
+            } else if (currentMapIndex === 4 || currentMapIndex === 5 || currentMapIndex === 6 || currentMapIndex === 7 || currentMapIndex === 8 || currentMapIndex === 9 || currentMapIndex === 10 || currentMapIndex === 11 || currentMapIndex === 12) {
+                ctx.fillStyle = (plat.type === 'solid' || plat.type === 'wall') ? '#654321' : '#4A4A4A';
+                ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+            } else if (currentMapIndex === 13) {
+                // 보스방: 플랫폼도 바닥/벽과 동일한 색
+                ctx.fillStyle = '#654321';
+                ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
             } else {
                 ctx.fillStyle = (plat.type === 'solid' || plat.type === 'wall') ? '#654321' : '#4A4A4A';
                 ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
@@ -1737,27 +3092,64 @@ function drawStump(ctx, x, y, w, h) {
 
     // 7-4: 표지판
     signs.forEach(sign => {
-        ctx.fillStyle   = '#8B5E3C';
-        ctx.fillRect(sign.x + sign.width / 2 - 4, sign.y + sign.height * 0.5, 8, sign.height * 0.5);
-        ctx.fillStyle   = '#C8A96E';
-        ctx.strokeStyle = '#5C3A1E';
-        ctx.lineWidth   = 2;
-        ctx.fillRect(sign.x, sign.y, sign.width, sign.height * 0.6);
-        ctx.strokeRect(sign.x, sign.y, sign.width, sign.height * 0.6);
-        ctx.fillStyle = '#3B1F0A';
-        ctx.font      = 'bold 10px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('!', sign.x + sign.width / 2, sign.y + sign.height * 0.38);
-
         const playerCX = player.x + player.width / 2;
         const signCX   = sign.x + sign.width / 2;
-        if (Math.abs(playerCX - signCX) < sign.interactRange) {
-            ctx.fillStyle = 'white';
-            ctx.font      = 'bold 13px monospace';
-            ctx.fillText('[F]', signCX, sign.y - 10);
+        const inRange  = Math.abs(playerCX - signCX) < sign.interactRange;
+
+        if (sign.isNpc) {
+            // ── NPC 렌더링 ──────────────────────────────────────────
+            const npcImg = sign.imgKey ? sprites[sign.imgKey] : null;
+            const npcDir = sign.direction || 'left';
+
+            if (npcImg && npcImg.complete && npcImg.naturalWidth !== 0) {
+                ctx.save();
+                if (npcDir === 'right') {
+                    ctx.translate(sign.x + sign.width, sign.y);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(npcImg, 0, 0, sign.width, sign.height);
+                } else {
+                    ctx.drawImage(npcImg, sign.x, sign.y, sign.width, sign.height);
+                }
+                ctx.restore();
+            } else {
+                // 이미지 없으면 직사각형 폴백
+                ctx.fillStyle   = '#7a6a9a';
+                ctx.fillRect(sign.x, sign.y, sign.width, sign.height);
+                ctx.strokeStyle = '#4a3a6a';
+                ctx.lineWidth   = 2;
+                ctx.strokeRect(sign.x, sign.y, sign.width, sign.height);
+            }
+
+            // [F] 상호작용 표시
+            if (inRange) {
+                ctx.fillStyle    = 'white';
+                ctx.font         = `bold 13px monospace`;
+                ctx.textAlign    = 'center';
+                ctx.fillText('[F]', signCX, sign.y - 10);
+                ctx.textAlign    = 'left';
+            }
+        } else {
+            // ── 기존 표지판 렌더링 ─────────────────────────────────
+            ctx.fillStyle   = '#8B5E3C';
+            ctx.fillRect(sign.x + sign.width / 2 - 4, sign.y + sign.height * 0.5, 8, sign.height * 0.5);
+            ctx.fillStyle   = '#C8A96E';
+            ctx.strokeStyle = '#5C3A1E';
+            ctx.lineWidth   = 2;
+            ctx.fillRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+            ctx.strokeRect(sign.x, sign.y, sign.width, sign.height * 0.6);
+            ctx.fillStyle = '#3B1F0A';
+            ctx.font      = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', sign.x + sign.width / 2, sign.y + sign.height * 0.38);
+
+            if (inRange) {
+                ctx.fillStyle = 'white';
+                ctx.font      = 'bold 13px monospace';
+                ctx.fillText('[F]', signCX, sign.y - 10);
+            }
+            ctx.textAlign = 'left';
         }
     });
-    ctx.textAlign = 'left';
 
     // 7-5: 잔상 (필살기 연출 중엔 숨김)
     if (typeof afterimages !== 'undefined' && player.ultPhase === 'none') {
@@ -1774,8 +3166,13 @@ function drawStump(ctx, x, y, w, h) {
 
     // 7-6: 플레이어 스프라이트
     let currentKey = 'PLAYER_STAND';
+    const deathKey = getDeathPlayerKey();
     const introKey = getIntroPlayerKey();
-    if (introKey) {
+    if (deathKey) {
+        // 사망 연출 중: 스프라이트 고정
+        currentKey = deathKey;
+        if (deathKey === 'PLAYER_FALL_DOWN') player.direction = 'left';
+    } else if (introKey) {
         // 인트로 연출 중: 스프라이트 고정, 방향은 왼쪽(쓰러진 방향)
         currentKey = introKey;
         if (introSeq.phase === 'fall' || introSeq.phase === 'hint') {
@@ -1870,7 +3267,9 @@ function drawStump(ctx, x, y, w, h) {
     }
     if (blinkVisible) {
         const alpha = (player.isInvincible && !player.isDashing && player.ultPhase === 'none') ? 0.6 : 1;
-        drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, player.direction, alpha);
+        // PLAYER_WAKE_UP은 사망 연출 전용 — 항상 좌우반전(right) 방향으로 그림
+        const drawDir = (currentKey === 'PLAYER_WAKE_UP') ? 'right' : player.direction;
+        drawSprite(currentKey, drawX, drawY, drawWidth, drawHeight, drawDir, alpha);
     }
 
     // 7-5-1: 순간이동 잔상
@@ -1878,6 +3277,9 @@ function drawStump(ctx, x, y, w, h) {
     drawTeleportTrails();
     drawUltParticles();
     drawSlashEffects();
+    drawBossStoneParticles();
+    // 세이브포인트 회복 이펙트 (월드 좌표계)
+    savepointEffect.draw();
 
     // 출입구 잠금/해제 표시
     drawMapTransitionDoors();
@@ -1888,26 +3290,63 @@ function drawStump(ctx, x, y, w, h) {
     // 7-7: 투사체
     projectile.draw();
 
+    // 7-7b: 구덩이 오버레이 — 플레이어/적을 덮어야 하므로 마지막에 렌더
+    if (currentMapIndex === 4) {
+        const pitX1 = 0, pitX2 = 400, pitY = 660;
+        // 그라데이션 (바닥 상단부)
+        const pitGrad = ctx.createLinearGradient(pitX1, pitY, pitX1, pitY + 60);
+        pitGrad.addColorStop(0,   'rgba(0, 0, 0, 0.92)');
+        pitGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0.6)');
+        pitGrad.addColorStop(1,   'rgba(0, 0, 0, 0.0)');
+        ctx.fillStyle = pitGrad;
+        ctx.fillRect(pitX1, pitY, pitX2 - pitX1, 60);
+        // 구덩이 아래 완전 검정
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+        ctx.fillRect(pitX1, pitY + 60, pitX2 - pitX1, world.height - pitY - 60);
+        // 오른쪽 가장자리
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(pitX2, pitY, 4, 20);
+    }
+
     ctx.restore();
 
     // 7-8: UI / 대화창 — DPR 배율 적용 (UI 좌표는 논리 픽셀 기준 그대로 유지)
     ctx.save();
     ctx.scale(DPR, DPR);
-    if (typeof drawUI       === 'function') drawUI();
-    if (typeof drawDialogue === 'function') drawDialogue();
-    if (typeof drawTutorial === 'function') drawTutorial();
-    drawIntroHint();
-    drawMoveHint();
-    drawTutHint();
-    drawDashHint();
-    drawTeleHint();
-    drawCombatTutHint();
-    drawUltimate();
+    if (!isDeathActive()) {
+        if (typeof drawUI       === 'function') drawUI();
+        if (typeof drawBossHpBar === 'function') drawBossHpBar();
+        if (typeof drawDialogue === 'function') drawDialogue();
+        if (typeof drawTutorial === 'function') drawTutorial();
+        drawIntroHint();
+        drawMoveHint();
+        drawTutHint();
+        drawDashHint();
+        drawTeleHint();
+        drawCombatTutHint();
+        drawSavepointHint();
+        drawUltimate();
+        // 일시정지 메뉴 (최상단 UI)
+        drawPauseMenu();
+    }
     ctx.restore();
 
     // 7-9: 페이드 오버레이
     if (mapTransition.alpha > 0) {
         ctx.fillStyle = `rgba(0, 0, 0, ${mapTransition.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    // 천장 전환 페이드 오버레이 (점프 모션 위에 덮어씌움)
+    if (ceilingTransition.alpha > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${ceilingTransition.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    // 사망 연출 암전 오버레이 (최상단)
+    drawDeathOverlay();
+
+    // 세이브포인트 이동 암전 오버레이
+    if (pauseMenu.fadeAlpha > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${pauseMenu.fadeAlpha})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 }
@@ -2128,13 +3567,22 @@ const dialogue = {
 function handleFKey() {
     if (dialogue.active) {
         if (!dialogue.isFinished) {
+            // 꾹 눌러도 OK: 현재 줄 텍스트 즉시 완성
             dialogue.displayText = dialogue.lines[dialogue.currentLine].text;
-            dialogue.charIndex = dialogue.displayText.length;
-            dialogue.isFinished = true;
+            dialogue.charIndex   = dialogue.displayText.length;
+            dialogue.isFinished  = true;
         } else {
+            // 다음 줄 진행은 이번 keydown이 "새로 눌린 것"일 때만 (fPressed 가드로 보장됨)
             dialogue.currentLine++;
             if (dialogue.currentLine >= dialogue.lines.length) {
                 dialogue.active = false;
+                // 보스맵(맵13) 대화 종료 시 체력바 등장 + 보스BGM 재생 + 보스 스폰
+                if (currentMapIndex === 13 && !bossHpBar.visible) {
+                    bossHpBar.startIntro();
+                    bgmPlayer.play('BGM_BOSS1', true);
+                // 보스 스폰 (맵 중앙)
+                    enemies.push(createEnemy('boss', 960, 1020));
+                }
             } else {
                 const line = dialogue.lines[dialogue.currentLine];
                 dialogue.speakerName = line.speaker || '';
@@ -2148,6 +3596,7 @@ function handleFKey() {
         return;
     }
 
+    // 대화 중이 아닐 때만 sign/NPC 상호작용 트리거
     const playerCX     = player.x + player.width / 2;
     const playerBottom = player.y + player.height;
 
@@ -2388,8 +3837,93 @@ const mapTransition = {
     speed:  0.06,
     toMap:  0,
     spawnX: 100,
-    spawnY: 500
+    spawnY: 500,
+    spawnDirection: '',
+    groundSpawn: false
 };
+
+// ── 천장 점프 전환 시스템 (맵3 → 맵4) ──────────────────────────────────
+// 점프 모션을 끊지 않고 암전 → 맵4 스폰 후 낙하 착지
+const ceilingTransition = {
+    active:   false,
+    alpha:    0,
+    phase:    'none',   // 'fadeOut' | 'switch' | 'fadeIn'
+    speed:    0.07,
+    savedDy:  0,        // 전환 시점의 dy 보존 (맵4에서 튀어오르는 느낌용)
+    toMap:    4,
+    spawnX:   640,
+    spawnY:   60,       // 맵4 바닥 구멍 위에서 아래로 떨어지는 위치
+};
+
+// 맵3에서 플레이어가 천장(y=0)에 닿았을 때 전환 시작
+function checkMap3CeilingTransition() {
+    if (currentMapIndex !== 3) return;
+    if (ceilingTransition.active || mapTransition.active) return;
+    // 플레이어 머리가 y=0 이상으로 올라가면 트리거
+    if (player.y <= 0 && player.dy < 0) {
+        ceilingTransition.active  = true;
+        ceilingTransition.phase   = 'fadeOut';
+        ceilingTransition.alpha   = 0;
+        ceilingTransition.savedDy = player.dy;   // 상승 속도 보존 (음수)
+        // 스폰 x는 구멍 오른쪽에 치우친 위치(x=0~400 중 x=320)
+        const pitCenterX = 320;  // 구덩이 오른쪽 치우침 (바닥 끝 x=400에 가깝게)
+        ceilingTransition.spawnX = pitCenterX;
+        ceilingTransition.spawnY = 100;  // 구멍 위에서 살짝 솟구쳤다 착지
+    }
+}
+
+function updateCeilingTransition() {
+    if (!ceilingTransition.active) return;
+
+    if (ceilingTransition.phase === 'fadeOut') {
+        ceilingTransition.alpha = Math.min(ceilingTransition.alpha + ceilingTransition.speed, 1);
+        if (ceilingTransition.alpha >= 1) {
+            ceilingTransition.phase = 'switch';
+        }
+    } else if (ceilingTransition.phase === 'switch') {
+        // 맵 전환 실행
+        projectile.reset();
+        player.lastTeleportTime = 0;
+        loadMap(ceilingTransition.toMap);
+        // 구멍(x=0~400) 오른쪽 치우친 위치에서 — 바닥(y=540) 바로 아래에 스폰하고 오른쪽으로 솟구치는 연출
+        player.x        = ceilingTransition.spawnX - player.width / 2;
+        player.y        = 680;    // 바닥(660) 아래에서 시작
+        player.dx       = 6;     // 오른쪽 수평 속도 (적당히) → 바닥에 착지
+        player.dy       = -18;   // 강한 상향 속도 → 구덩이에서 솟구침
+        player.pitLaunchTimer = 35; // 35프레임 동안 오른쪽 dx 강제 유지
+        player.grounded = false;
+        player.jumpCount = 2;    // 공중이므로 추가 점프 불가
+        _snapCameraToPlayer();
+        ceilingTransition.phase = 'fadeIn';
+    } else if (ceilingTransition.phase === 'fadeIn') {
+        ceilingTransition.alpha = Math.max(ceilingTransition.alpha - ceilingTransition.speed, 0);
+        if (ceilingTransition.alpha <= 0) {
+            ceilingTransition.alpha  = 0;
+            ceilingTransition.phase  = 'none';
+            ceilingTransition.active = false;
+        }
+    }
+}
+
+// 맵4 구멍에서 떨어질 때 맵3 최상단으로 복귀
+function checkMap4PitFall() {
+    if (currentMapIndex !== 4) return;
+    if (ceilingTransition.active || mapTransition.active) return;
+    // 맵4 바닥 구멍 영역(x=0~400)을 통해 바닥(y=540) 아래로 떨어지면
+    const pitX1 = 0, pitX2 = 400;
+    const pitY  = 665;   // 바닥 y=660보다 살짝 아래
+    const inPitX = player.x + player.width > pitX1 && player.x < pitX2;
+    if (inPitX && player.y > pitY && player.dy > 0) {
+        // 암전 후 맵3 최상단으로 전환
+        mapTransition.active = true;
+        mapTransition.phase  = 'fadeOut';
+        mapTransition.alpha  = 0;
+        mapTransition.toMap  = 3;
+        // 맵3 최상단 근처 (y=280 플랫폼 위) — x는 구멍 X 기준으로 맵3 폭에 클램프
+        mapTransition.spawnX = Math.max(50, Math.min(player.x, 1200));
+        mapTransition.spawnY = 160;   // 맵3 최상단 y=280 플랫폼 위 공중에서 낙하
+    }
+}
 
 function checkMapTransitions() {
     if (mapTransition.active) return;
@@ -2422,6 +3956,8 @@ function checkMapTransitions() {
             mapTransition.toMap  = tr.toMap;
             mapTransition.spawnX = tr.spawnX;
             mapTransition.spawnY = tr.spawnY;
+            mapTransition.spawnDirection = tr.direction;
+            mapTransition.groundSpawn = !!tr.groundSpawn;
             break;
         }
     }
@@ -2494,23 +4030,47 @@ function updateMapTransition() {
             player.y  = mapTransition.spawnY;
             player.dx = 0;
             player.dy = 0;
+            if (mapTransition.spawnDirection) player.direction = mapTransition.spawnDirection;
+            if (mapTransition.groundSpawn) {
+                player.grounded = true;
+                player.jumpCount = 0;
+                player.jumpTimer = 0;
+                player.hasAirAttacked = false;
+                player.isDescending = false;
+            }
 
             const logicalW = canvas.width  / SCALE;
             const logicalH = canvas.height / SCALE;
             camera.x = player.x - logicalW / 2 + player.width  / 2;
-            if (camera.x < 0) camera.x = 0;
-            if (camera.x > world.width - logicalW) camera.x = world.width - logicalW;
-            cameraY  = player.y - logicalH / 2 + player.height / 2;
-            cameraY  = Math.max(0, Math.min(cameraY, world.height - logicalH));
+            camera.x = Math.max(0, Math.min(camera.x, Math.max(0, world.width - logicalW)));
+            cameraY  = currentMapIndex === 13
+                ? Math.max(0, world.height - logicalH)
+                : player.y - logicalH / 2 + player.height / 2;
+            cameraY  = Math.max(0, Math.min(cameraY, Math.max(0, world.height - logicalH)));
 
             mapTransition.phase = 'fadeIn';
         }
     } else if (mapTransition.phase === 'fadeIn') {
+        // fadeIn 중에도 카메라를 플레이어에 즉시 스냅 (보간 튀는 현상 방지)
+        const logicalW2 = canvas.width  / SCALE;
+        const logicalH2 = canvas.height / SCALE;
+        camera.x = player.x - logicalW2 / 2 + player.width  / 2;
+        camera.x = Math.max(0, Math.min(camera.x, Math.max(0, world.width  - logicalW2)));
+        cameraY  = currentMapIndex === 13
+            ? Math.max(0, world.height - logicalH2)
+            : player.y - logicalH2 / 2 + player.height / 2;
+        cameraY  = Math.max(0, Math.min(cameraY,  Math.max(0, world.height - logicalH2)));
+
         mapTransition.alpha -= mapTransition.speed;
         if (mapTransition.alpha <= 0) {
             mapTransition.alpha  = 0;
             mapTransition.phase  = 'none';
             mapTransition.active = false;
+            // 세이브포인트 이펙트 대기 중이면 전환 완료 후 발동
+            if (savepointEffect.pending) {
+                savepointEffect.pending = false;
+                savepointEffect.trigger();
+            }
         }
     }
 }
@@ -2660,6 +4220,135 @@ function drawUI() {
         }
         ctx.textAlign = 'left';
     }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// [BOSS HP BAR] 보스 체력바 시스템
+// ══════════════════════════════════════════════════════════════════
+const bossHpBar = {
+    active:      false,
+    visible:     false,
+    hp:          500,
+    maxHp:       500,
+
+    // 등장 연출 상태
+    introPhase:  'idle',
+    bgAlpha:     0,
+    fillRatio:   0,
+    SLIDE_DUR:   18,
+    FILL_DUR:    28,
+    timer:       0,
+
+    // 실제 HP: 맵13의 boss enemy와 동기화
+    get ratio() {
+        const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
+        if (boss) {
+            this.hp    = boss.hp;
+            this.maxHp = boss.maxHp;
+        }
+        return Math.max(this.hp, 0) / this.maxHp;
+    },
+
+    startIntro() {
+        this.active     = true;
+        this.visible    = true;
+        this.introPhase = 'slideIn';
+        this.bgAlpha    = 0;
+        this.fillRatio  = 0;
+        this.timer      = 0;
+    },
+
+    update() {
+        if (!this.visible) return;
+        if (this.introPhase === 'slideIn') {
+            this.timer++;
+            this.bgAlpha = Math.min(this.timer / this.SLIDE_DUR, 1);
+            if (this.timer >= this.SLIDE_DUR) {
+                this.introPhase = 'fillHp';
+                this.timer = 0;
+            }
+        } else if (this.introPhase === 'fillHp') {
+            this.timer++;
+            this.fillRatio = Math.min(this.timer / this.FILL_DUR, 1);
+            if (this.timer >= this.FILL_DUR) {
+                this.introPhase = 'done';
+                this.fillRatio  = 1;
+            }
+        }
+    },
+
+    draw(W, H) {
+        if (!this.visible || this.bgAlpha <= 0) return;
+
+        const barW   = W * 0.55;
+        const barH   = 36;
+        const barX   = (W - barW) / 2;
+        const barY   = H - 80;
+        const radius = 6;
+
+        ctx.save();
+        ctx.globalAlpha = this.bgAlpha;
+
+        // 보스 이름
+        ctx.font         = `bold 26px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.strokeStyle  = 'rgba(0,0,0,1)';
+        ctx.lineWidth    = 6;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText('???', W / 2, barY - 14);
+        ctx.fillStyle = 'rgba(255, 200, 200, 1)';
+        ctx.fillText('???',   W / 2, barY - 14);
+
+        // 바 바깥 테두리 (검은 테두리)
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+        roundRect(ctx, barX - 4, barY - 4, barW + 8, barH + 8, radius + 2);
+        ctx.fill();
+
+        // 바 배경
+        ctx.fillStyle = 'rgba(40, 8, 8, 0.95)';
+        roundRect(ctx, barX, barY, barW, barH, radius);
+        ctx.fill();
+
+        // 빨간 체력 (등장 연출 시 fillRatio, 이후 ratio 사용)
+        const displayRatio = this.introPhase !== 'done'
+            ? this.fillRatio * this.ratio
+            : this.ratio;
+
+        if (displayRatio > 0) {
+            const fillW = (barW - 6) * displayRatio;
+            const grad  = ctx.createLinearGradient(barX, barY, barX, barY + barH);
+            grad.addColorStop(0,   'rgba(240, 60,  40, 1)');
+            grad.addColorStop(0.5, 'rgba(200, 30,  20, 1)');
+            grad.addColorStop(1,   'rgba(150, 15,  15, 1)');
+            ctx.fillStyle = grad;
+            roundRect(ctx, barX + 3, barY + 3, fillW, barH - 6, radius - 1);
+            ctx.fill();
+
+            // 광택
+            ctx.fillStyle = 'rgba(255, 140, 120, 0.22)';
+            roundRect(ctx, barX + 3, barY + 3, fillW, (barH - 6) * 0.38, radius - 1);
+            ctx.fill();
+        }
+
+        // 바 안쪽 테두리
+        ctx.strokeStyle = 'rgba(180, 40, 40, 0.85)';
+        ctx.lineWidth   = 2;
+        roundRect(ctx, barX, barY, barW, barH, radius);
+        ctx.stroke();
+
+        ctx.restore();
+    },
+};
+
+function drawBossHpBar() {
+    if (currentMapIndex !== 13) return;
+    if (!bossHpBar.visible) return;
+
+    const W = LOGICAL_W;
+    const H = LOGICAL_H;
+    bossHpBar.update();
+    bossHpBar.draw(W, H);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -2858,8 +4547,8 @@ const ENEMY_TYPES = {
         hp:           80,
         speed:        4,
         gravity:      0.8,
-        detectRange:  300,
-        loseRange:    500,
+        detectRange:  500,
+        loseRange:    900,
         attackRange:  65,
         attackDamage: 8,
         attackCooldown: 90,
@@ -2888,6 +4577,55 @@ const ENEMY_TYPES = {
         imgMove: 'ENEMY2_MOVE',
         imgAttack1: 'ENEMY2_ATTACK1',
         imgAttack2: 'ENEMY2_ATTACK2',
+    },
+    boss: {
+        width:          100,
+        height:         130,
+        hp:             500,
+        speed:          4.2,          // 플레이어(7)의 0.6배
+        gravity:        0.9,
+        detectRange:    1400,
+        loseRange:      2000,
+        attackRange:    168,  // 공격1 인식사거리
+        attackDamage:   18,
+        attackCooldown: 128,  // 공격1 쿨타임 (150 × 0.85)
+        // 공격2 돌진 파라미터
+        atk2Damage:     14,
+        atk2Windup:     40,       // 공격2 딜레이 프레임
+        atk2DashSpeed:  38,       // 돌진 초기 dx
+        atk2DashDecay:  0.88,     // 매 프레임 dx에 곱하는 감쇄율
+        atk2DashFrames: 35,       // 돌진 지속 프레임
+        atk2PostDelay:  20,       // 돌진 후 후딜레이 프레임
+        atk2Cooldown:   170,      // 공격2 전용 쿨타임 (200 × 0.85)
+        // 도약
+        leapCooldownMin: 126,
+        leapCooldownMax: 294,
+        leapWindup:      35,
+        leapSpeed:       13,
+        leapJumpPower:   14,
+        // 공격3 파라미터
+        atk3Damage:      22,
+        atk3Cooldown:    450,    // 공격3 전용 쿨타임 (7.5초)
+        atk3IdleNeeded:  120,    // 공격1/2 미발동 필요 프레임 (2초)
+        atk3FarDist:     500,    // 발동 최소 거리
+        atk3WindupDur:   40,     // 공중 정지(예고) 프레임
+        atk3StrikeDur:   18,     // 내려찍기 프레임
+        atk3PostDur:     30,     // 후딜레이 프레임
+        atk3RangeX:      160,    // 착지 지점 기준 좌우 판정 반경
+        atk3RangeY:      180,    // 착지 지점 기준 상하 판정 범위
+        imgStand:    'BOSS_STAND',
+        imgMove:     'BOSS_MOVE',
+        imgAttack:   'BOSS_ATTACK',
+        imgAtk1_1:   'BOSS_ATTACK1_1',
+        imgAtk1_2:   'BOSS_ATTACK1_2',
+        imgAtk1_3:   'BOSS_ATTACK1_3',
+        imgAtk2_1:   'BOSS_ATTACK2_1',
+        imgAtk2_2:   'BOSS_ATTACK2_2',
+        imgAtk3_1:   'BOSS_ATTACK3_1',
+        imgAtk3_2:   'BOSS_ATTACK3_2',
+        imgAtk3_3:   'BOSS_ATTACK3_3',
+        imgJump1:    'BOSS_JUMP1',
+        imgJump2:    'BOSS_JUMP2',
     },
     enemy3: {
         // ★ 이 두 값만 바꾸면 스프라이트·화살 스케일 전체 연동
@@ -2958,8 +4696,10 @@ function createEnemy(type, x, y, opts) {
         }
     };
 
+    // ── 타입별 추가 속성 합성 ─────────────────────────────────────────
+    let result;
     if (type === 'enemy1') {
-        return Object.assign(base, {
+        result = Object.assign(base, {
             imgStand:   def.imgStand,
             imgMove:    def.imgMove,
             imgAttack1: def.imgAttack1,
@@ -2972,10 +4712,8 @@ function createEnemy(type, x, y, opts) {
             patrolRestTimer: 0,
             attack3OffsetX:  0,
         });
-    }
-
-    if (type === 'enemy2') {
-        return Object.assign(base, {
+    } else if (type === 'enemy2') {
+        result = Object.assign(base, {
             speedY:          def.speedY,
             attackDuration:  def.attackDuration,
             attackWindup:    def.attackWindup,
@@ -2991,10 +4729,70 @@ function createEnemy(type, x, y, opts) {
             isWindup:       false,
             hasHitPlayer:   false,
         });
-    }
-
-    if (type === 'enemy3') {
-        return Object.assign(base, {
+    } else if (type === 'boss') {
+        result = Object.assign(base, {
+            imgStand:      def.imgStand,
+            imgMove:       def.imgMove,
+            imgAttack:     def.imgAttack,
+            imgAtk1_1:     def.imgAtk1_1,
+            imgAtk1_2:     def.imgAtk1_2,
+            imgAtk1_3:     def.imgAtk1_3,
+            imgAtk2_1:     def.imgAtk2_1,
+            imgAtk2_2:     def.imgAtk2_2,
+            imgAtk3_1:     def.imgAtk3_1,
+            imgAtk3_2:     def.imgAtk3_2,
+            imgAtk3_3:     def.imgAtk3_3,
+            imgJump1:      def.imgJump1,
+            imgJump2:      def.imgJump2,
+            // 공격2 파라미터
+            atk2Damage:     def.atk2Damage,
+            atk2Windup:     def.atk2Windup,
+            atk2DashSpeed:  def.atk2DashSpeed,
+            atk2DashDecay:  def.atk2DashDecay,
+            atk2DashFrames: def.atk2DashFrames,
+            atk2PostDelay:  def.atk2PostDelay,
+            atk2Cooldown:   def.atk2Cooldown,
+            // 공격2 런타임 상태
+            _atk2Active:      false,
+            _atk2Windup:      false,
+            _atk2WindupTimer: 0,
+            _atk2Dashing:     false,
+            _atk2DashTimer:   0,
+            _atk2DashDir:     1,
+            _atk2PostTimer:   0,
+            _atk2CooldownTimer: 0,
+            // 공격3 파라미터
+            atk3Damage:     def.atk3Damage,
+            atk3Cooldown:   def.atk3Cooldown,
+            atk3IdleNeeded: def.atk3IdleNeeded,
+            atk3FarDist:    def.atk3FarDist,
+            atk3WindupDur:  def.atk3WindupDur,
+            atk3StrikeDur:  def.atk3StrikeDur,
+            atk3PostDur:    def.atk3PostDur,
+            atk3RangeX:     def.atk3RangeX,
+            atk3RangeY:     def.atk3RangeY,
+            // 공격3 런타임 상태
+            _atk3Phase:         'none',  // 'none'|'jump'|'windup'|'strike'|'post'
+            _atk3CooldownTimer: 360,    // 전투 시작 후 6초간 공격3 비활성화
+            _atk3IdleTimer:     0,       // 공격1/2 미발동 누적 프레임
+            _atk3TargetX:       0,       // 발동 당시 플레이어 X
+            _atk3WindupTimer:   0,
+            _atk3StrikeTimer:   0,
+            _atk3PostTimer:     0,
+            _atk3HitDone:       false,
+            // 도약
+            leapCooldownMin:  def.leapCooldownMin,
+            leapCooldownMax:  def.leapCooldownMax,
+            leapWindup:       def.leapWindup,
+            leapSpeed:        def.leapSpeed,
+            leapJumpPower:    def.leapJumpPower,
+            leapTimer:        0,
+            leapWindupTimer:  0,
+            isLeapWindup:     false,
+            isLeaping:        false,
+        });
+    } else if (type === 'enemy3') {
+        result = Object.assign(base, {
             imgStand:      def.imgStand,
             imgAttack1:    def.imgAttack1,
             imgAttack2:    def.imgAttack2,
@@ -3006,12 +4804,38 @@ function createEnemy(type, x, y, opts) {
             windupTimer:   0,
             arrows:        [],
         });
+    } else {
+        result = base;
     }
 
-    return base;
+    // ── 스폰 즉시 플랫폼 위로 snap (gravity=0인 enemy2는 제외) ──────
+    if (def.gravity > 0) {
+        let bestPlat = null;
+        let bestDist = Infinity;
+        const foot = result.y + result.height;
+        for (const plat of platforms) {
+            const pt = plat.type || 'platform';
+            if (pt === 'wall') continue;
+            if (result.x + result.width > plat.x && result.x < plat.x + plat.width) {
+                // 발 위치가 플랫폼 상단 위쪽에 있고 가장 가까운 플랫폼으로 snap
+                if (foot <= plat.y + 4 && plat.y - foot < bestDist) {
+                    bestDist = plat.y - foot;
+                    bestPlat = plat;
+                }
+            }
+        }
+        if (bestPlat) {
+            result.y        = bestPlat.y - result.height;
+            result.dy       = 0;
+            result.grounded = true;
+        }
+    }
+
+    return result;
 }
 
 function updateEnemies() {
+    if (isDeathActive()) return;   // 사망 연출 중 적 AI 정지
     for (let i = enemies.length - 1; i >= 0; i--) {
         const e = enemies[i];
 
@@ -3032,6 +4856,7 @@ function updateEnemies() {
         }
 
         if (e.cooldownTimer > 0) e.cooldownTimer--;
+        if (e.type === 'boss' && e._atk2CooldownTimer > 0) e._atk2CooldownTimer--;
 
         const px = player.x + player.width  / 2;
         const py = player.y + player.height / 2;
@@ -3102,7 +4927,7 @@ function updateEnemies() {
                     e.grounded = false;
                     platforms.forEach(plat => {
                         const type = plat.type || 'platform';
-                        if (type === 'solid') {
+                        if (type === 'solid' || type === 'platform') {
                             if (e.x + e.width  > plat.x &&
                                 e.x            < plat.x + plat.width &&
                                 e.y + e.height >= plat.y &&
@@ -3191,6 +5016,25 @@ function updateEnemies() {
                             e.patrolTimer     = 60 + Math.floor(Math.random() * 80);
                             e.patrolRestTimer = 0;
                         }
+                        // ── 배회 중 발판 끝 감지: 앞쪽 아래에 발판이 없으면 방향 반전 ──
+                        if (e.grounded) {
+                            const stepX  = e.patrolDir > 0 ? e.x + e.width + 4 : e.x - 4;
+                            const footY  = e.y + e.height;
+                            let floorAhead = false;
+                            for (const plat of platforms) {
+                                const pt = plat.type || 'platform';
+                                if (pt === 'wall') continue;
+                                if (stepX >= plat.x && stepX <= plat.x + plat.width &&
+                                    footY >= plat.y - 4 && footY <= plat.y + plat.height + 2) {
+                                    floorAhead = true;
+                                    break;
+                                }
+                            }
+                            if (!floorAhead) {
+                                e.patrolDir   = -e.patrolDir;
+                                e.patrolTimer = 0;
+                            }
+                        }
                         e.state     = 'walk';
                         e.direction = e.patrolDir > 0 ? 'right' : 'left';
                         e.dx        = e.patrolDir * e.speed * 0.6;
@@ -3219,7 +5063,7 @@ function updateEnemies() {
                         e.patrolDir   = -e.patrolDir;
                         e.patrolTimer = 0;
                     }
-                } else if (type === 'solid') {
+                } else if (type === 'solid' || type === 'platform') {
                     if (e.x + e.width  > plat.x &&
                         e.x            < plat.x + plat.width &&
                         e.y + e.height >= plat.y &&
@@ -3308,9 +5152,465 @@ function updateEnemies() {
                     e.x += Math.sin(e.floatTimer * 0.02) * 0.5;
                     e.y += Math.sin(e.floatTimer * 0.015) * 0.3;
                 }
+
+                // ── enemy2 플랫폼/바닥 충돌: 너무 아래로 내려가지 않도록 ──
+                platforms.forEach(plat => {
+                    const pt = plat.type || 'platform';
+                    if (pt === 'wall') return;
+                    if (e.x + e.width > plat.x && e.x < plat.x + plat.width &&
+                        e.y + e.height >= plat.y && e.y + e.height <= plat.y + 30) {
+                        e.y = plat.y - e.height;
+                    }
+                });
             }
         }
 
+        // ── boss ─────────────────────────────────────────────────
+        if (e.type === 'boss') {
+            // 중력 (공격3 windup 중에는 공중 정지)
+            if (e._atk3Phase !== 'windup') {
+                e.dy += e.gravity;
+                if (e.dy > 22) e.dy = 22;
+            }
+            // 공격3 진행 중 플랫폼 무시 유지 (solid 바닥은 플랫폼 충돌 코드에서 허용)
+
+            // 보스는 항상 어그로
+            e.isAggro = true;
+
+            if (e.leapTimer > 0) e.leapTimer--;
+            if (e._atk3CooldownTimer > 0) e._atk3CooldownTimer--;
+
+            // 공격3 아이들 타이머: 공격1/2가 활성화되지 않은 프레임 누적
+            const atk12Active = e.attackTimer > 0 || e._atk2Active || e._atk3Phase !== 'none';
+            if (atk12Active) {
+                e._atk3IdleTimer = 0;
+            } else {
+                e._atk3IdleTimer++;
+            }
+
+            // 플레이어 중심 기준 거리
+            const bpx = player.x + player.width  / 2;
+            const bpy = player.y + player.height / 2;
+            const bex = e.x + e.width  / 2;
+            const bey = e.y + e.height / 2;
+            const bdx = bpx - bex;   // 양수=플레이어가 오른쪽
+            const bdy = bpy - bey;   // 양수=플레이어가 아래
+            const absDX = Math.abs(bdx);
+            const absDY = Math.abs(bdy);
+
+            // 플레이어가 플랫폼(공중) 위에 있는지 판정
+            const playerOnPlatform = player.grounded &&
+                                     (player.y + player.height) < (world.height - 65);
+
+            // ── 상태 머신 ────────────────────────────────────────
+
+            // ── 공격3 상태머신 ─────────────────────────────────────
+            if (e._atk3Phase === 'jump') {
+                // 점프 비행 중: 목표 X까지 이동
+                e.state = e.dy < 0 ? 'jump1' : 'jump2';
+                // 목표 X에 도달하면 windup으로 전환
+                // 단, 아직 상승 중(dy < 0)이면 windup 전환 금지 → 최소 포물선 보장
+                const bexNow = e.x + e.width / 2;
+                const distToTarget = e._atk3TargetX - bexNow;
+                const overshot = e._atk3DashDir > 0
+                    ? bexNow >= e._atk3TargetX
+                    : bexNow <= e._atk3TargetX;
+                if ((overshot || Math.abs(distToTarget) < 10) && e.dy >= 0) {
+                    // 목표 X에 도달 & 하강 중 — 공중에서 정지 후 windup
+                    e.dx = 0;
+                    e.dy = 0;   // 중력 일시 무효화 (windup 동안 공중 정지)
+                    e._atk3Phase       = 'windup';
+                    e._atk3WindupTimer = e.atk3WindupDur;
+                    e._atk3HitDone     = false;
+                }
+
+            } else if (e._atk3Phase === 'windup') {
+                // 공중 정지 + 공격 예고
+                e.state = 'attack';   // atk1_1 스프라이트 재활용
+                e.dx    = 0;
+                e.dy    = 0;          // 중력 무효
+                e._atk3WindupTimer--;
+                if (e._atk3WindupTimer <= 0) {
+                    e._atk3Phase       = 'strike';
+                    e._atk3StrikeTimer = e.atk3StrikeDur;
+                }
+
+            } else if (e._atk3Phase === 'strike') {
+                // 내려찍기: 빠르게 하강
+                e.state = 'attack';
+                e.dx    = 0;
+                e.dy    = 28;         // 강제 낙하 속도
+                e._atk3StrikeTimer--;
+
+                // ── 하강 중 매 프레임 공격 판정 ────────────────────
+                {
+                    const strikeX  = e.x + e.width  / 2;
+                    const strikeY  = e.y + e.height;
+                    const px3      = player.x + player.width  / 2;
+                    const py3      = player.y + player.height / 2;
+                    const inX3     = Math.abs(px3 - strikeX) < e.atk3RangeX;
+                    const inY3     = py3 > strikeY - e.atk3RangeY && py3 < strikeY + 40;
+                    if (inX3 && inY3 && !player.isInvincible) {
+                        player.hp              = Math.max(player.hp - e.atk3Damage, 0);
+                        player.isInvincible    = true;
+                        player.invincibleTimer = 60;
+                        player.dx = (px3 - strikeX > 0 ? 1 : -1) * 9;
+                        player.dy = -8;
+                        e._atk3HitDone = true;   // 하강 중 명중 시 착지 판정 생략
+                    }
+                }
+
+                // 착지 or 타이머 종료 시 후딜로 전환
+                if (e.grounded || e._atk3StrikeTimer <= 0) {
+                    e.dy = 0;
+                    e._atk3Phase     = 'post';
+                    e._atk3PostTimer = e.atk3PostDur;
+
+                    // 착지 순간 판정 (하강 중 미명중 시 1회)
+                    if (!e._atk3HitDone) {
+                        e._atk3HitDone = true;
+                        const landX  = e.x + e.width  / 2;
+                        const landY  = e.y + e.height;
+                        const px3    = player.x + player.width  / 2;
+                        const py3    = player.y + player.height / 2;
+                        const inX3   = Math.abs(px3 - landX) < e.atk3RangeX;
+                        const inY3   = py3 > landY - e.atk3RangeY && py3 < landY + 20;
+                        if (inX3 && inY3 && !player.isInvincible) {
+                            player.hp              = Math.max(player.hp - e.atk3Damage, 0);
+                            player.isInvincible    = true;
+                            player.invincibleTimer = 60;
+                            player.dx = (px3 - landX > 0 ? 1 : -1) * 9;
+                            player.dy = -8;
+                        }
+                        // 착지 돌 파티클
+                        spawnBossStoneParticles(
+                            landX - e.atk3RangeX,
+                            e.atk3RangeX * 2,
+                            landY - 60,
+                            landY
+                        );
+                    }
+                }
+
+            } else if (e._atk3Phase === 'post') {
+                // 후딜레이
+                e.state = 'attack';   // atk1_3 스프라이트
+                e.dx    = 0;
+                e._atk3PostTimer--;
+                if (e._atk3PostTimer <= 0) {
+                    e._atk3Phase            = 'none';
+                    e._atk3CooldownTimer    = e.atk3Cooldown;
+                    e._leapIgnorePlatforms  = false;
+                }
+
+            // ── 공격2 후딜레이 ─────────────────────────────────────
+            } else if (e._atk2PostTimer > 0) {
+                e.state = 'attack';
+                e.dx    = 0;
+                e._atk2PostTimer--;
+                if (e._atk2PostTimer <= 0) {
+                    e._atk2Active = false;
+                    e.state       = 'idle';
+                }
+
+            // ── 공격2 돌진 진행 ────────────────────────────────────
+            } else if (e._atk2Dashing) {
+                e.state = 'attack';
+                e.dx   *= e.atk2DashDecay;
+                e._atk2DashTimer--;
+
+                // 돌진 슬래시 이펙트: 3프레임마다 스폰 (빠른 잔상 느낌)
+                if (e._atk2DashTimer % 3 === 0) {
+                    spawnBossDashSlash(e);
+                }
+
+                // 돌진 중 보스 본체 히트박스로 피해 판정
+                const dashHitX = e.x;
+                const dashHitY = e.y;
+                const dashHitW = e.width;
+                const dashHitH = e.height;
+                const pOvX = player.x + player.width  > dashHitX && player.x < dashHitX + dashHitW;
+                const pOvY = player.y + player.height > dashHitY && player.y < dashHitY + dashHitH;
+                if (pOvX && pOvY && !player.isInvincible) {
+                    player.hp              = Math.max(player.hp - e.atk2Damage, 0);
+                    player.isInvincible    = true;
+                    player.invincibleTimer = 60;
+                    player.dx = e._atk2DashDir * 10;
+                    player.dy = -7;
+                }
+
+                if (e._atk2DashTimer <= 0 || Math.abs(e.dx) < 1.5) {
+                    e._atk2Dashing      = false;
+                    e.dx                = 0;
+                    e._atk2PostTimer    = e.atk2PostDelay;
+                    e._atk2CooldownTimer = e.atk2Cooldown;
+                    e.state             = 'attack';
+                }
+
+            // ── 공격2 딜레이 ───────────────────────────────────────
+            } else if (e._atk2Windup) {
+                e.state = 'attack';
+                e.dx    = 0;
+                // 딜레이 중 방향 전환 허용 (15프레임)
+                if (e._atk2WindupTimer > e.atk2Windup - 15) {
+                    e.direction    = bdx >= 0 ? 'right' : 'left';
+                    e._atk2DashDir = e.direction === 'right' ? 1 : -1;
+                }
+                e._atk2WindupTimer--;
+                if (e._atk2WindupTimer <= 0) {
+                    e._atk2Windup    = false;
+                    e._atk2Dashing   = true;
+                    e._atk2DashTimer = e.atk2DashFrames;
+                    e.dx = e._atk2DashDir * e.atk2DashSpeed;
+                }
+
+            // ── 공격1 타이머 ───────────────────────────────────────
+            } else if (e.attackTimer > 0) {
+                e.attackTimer--;
+                e.dx    = 0;
+                e.state = 'attack';
+
+                // 공격1 진행 중 방향 전환 불가
+                const hitFrame = 60 - e._atk1DelayTotal;   // = 15
+
+                // 공격1 판정: 딜레이 끝 순간 1회
+                if (e._atk1DelayTotal !== undefined && !e._atk1HitDone) {
+                    if (e.attackTimer === hitFrame) {
+                        e._atk1HitDone = true;
+                        const atk1RangeX = 280;
+                        const atk1RangeY = e.height * 0.45;
+                        // 보스 본체 포함: 보스 뒤쪽 끝부터 앞쪽 280px까지
+                        const bossFrontX = e.direction === 'right'
+                            ? e.x                        // 보스 왼쪽 끝부터
+                            : e.x + e.width - atk1RangeX; // 보스 오른쪽 끝에서 280px 앞까지
+                        const hitTop    = e.y + e.height / 2 - atk1RangeY;
+                        const hitBottom = e.y + e.height / 2 + atk1RangeY;
+                        const pCenterX  = player.x + player.width  / 2;
+                        const pCenterY  = player.y + player.height / 2;
+                        const inX = pCenterX >= bossFrontX && pCenterX <= bossFrontX + atk1RangeX;
+                        const inY = pCenterY >= hitTop     && pCenterY <= hitBottom;
+                        if (inX && inY && !player.isInvincible) {
+                            player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                            player.isInvincible    = true;
+                            player.invincibleTimer = 60;
+                            const bdxHit           = pCenterX - (e.x + e.width / 2);
+                            player.dx = (bdxHit > 0 ? 1 : -1) * 8;
+                            player.dy = -6;
+                        }
+                        // 돌 파티클: 공격 범위 전체에서 스폰 (판정 성공 여부와 무관)
+                        spawnBossStoneParticles(bossFrontX, atk1RangeX, hitTop, hitBottom);
+                    }
+                }
+            } else if (e.isLeapWindup) {
+                // 도약 준비자세: 제자리 정지
+                e.dx = 0;
+                e.state = 'jump1';
+                e.leapWindupTimer--;
+                if (e.leapWindupTimer <= 0) {
+                    e.isLeapWindup = false;
+                    e.isLeaping    = true;
+
+                    // ── 도약 발사: X/Y 독립 계산 ──────────────────
+                    const basePower = e._dynLeapJumpPower || e.leapJumpPower;
+                    if (e._dynLeapSpeed === 0) {
+                        e.dy = -basePower;
+                    } else {
+                        const launchDist = Math.sqrt(bdx * bdx + bdy * bdy);
+                        const closeRatio = Math.min(1, launchDist / 600);
+                        const minPower   = e.leapJumpPower * 0.45;
+                        e.dy = -(minPower + (basePower - minPower) * closeRatio);
+                    }
+
+                    if (e._dynLeapSpeed === 0) {
+                        e.dx = 0;
+                    } else {
+                        const airTime  = Math.max(1, (2 * Math.abs(e.dy)) / e.gravity);
+                        const baseSpeed = e._dynLeapSpeed || e.leapSpeed;
+                        const wantedDX  = bdx / airTime;
+                        const maxDX     = Math.min(baseSpeed, Math.abs(wantedDX) + 2);
+                        e.dx = Math.sign(bdx) * Math.min(Math.abs(wantedDX), maxDX);
+                        if (absDX < 60) e.dx = 0;
+                    }
+
+                    e._dynLeapJumpPower = 0;
+                    e._dynLeapSpeed     = 0;
+                    e.direction = bdx > 0 ? 'right' : 'left';
+
+                    if (!e._leapIgnorePlatforms) {
+                        const bossLeft  = Math.min(e.x, e.x + bdx);
+                        const bossRight = Math.max(e.x, e.x + bdx) + e.width;
+                        e._leapIgnorePlatforms = platforms.some(plat => {
+                            if ((plat.type || 'platform') !== 'platform') return false;
+                            const overlapX = plat.x < bossRight && plat.x + plat.width > bossLeft;
+                            const playerBelowPlat = (player.y + player.height) > plat.y;
+                            return overlapX && playerBelowPlat;
+                        });
+                    }
+                }
+
+            } else if (e.isLeaping) {
+                e.state = e.dy < 0 ? 'jump1' : 'jump2';
+                if (e.grounded) {
+                    e.isLeaping = false;
+                    e.state     = 'idle';
+                    e.dx        = 0;
+                    e._forceLeapChecked    = false;
+                    e._leapIgnorePlatforms = false;
+                    e.leapTimer = e.leapCooldownMin +
+                        Math.floor(Math.random() * (e.leapCooldownMax - e.leapCooldownMin));
+                }
+
+            } else {
+                // ── 일반 상태: 공격 / 이동 / 도약 판정 ──────────────
+                // 공격1 인식범위
+                const inAtk1Range = absDX < e.attackRange && absDY < e.height;
+
+                if (e._forceLeapCooldown === undefined) e._forceLeapCooldown = 0;
+                if (e._forceLeapCooldown > 0) e._forceLeapCooldown--;
+
+                if (e.grounded && e._forceLeapCooldown <= 0) {
+                    const closeX     = absDX < e.attackRange;
+                    const highAbove  = bdy < -150;
+                    const onPlatform = player.grounded && playerOnPlatform;
+
+                    if (closeX && highAbove && onPlatform) {
+                        const heightRatio   = Math.min(1, absDY / 300);
+                        e._dynLeapJumpPower = Math.min(e.leapJumpPower + heightRatio * 18, 32);
+                        e._dynLeapSpeed     = 0;
+                        e.isLeapWindup      = true;
+                        e.leapWindupTimer   = e.leapWindup;
+                        e.direction         = bdx >= 0 ? 'right' : 'left';
+                        e.dx                = 0;
+                        e._forceLeapCooldown = 90;
+                    } else {
+                        const bossOnAirPlatform = e.grounded &&
+                                                  (e.y + e.height) < (world.height - 65);
+                        const playerBelow    = bdy > 80;
+                        const playerOnGround = player.grounded && !playerOnPlatform;
+                        if (closeX && bossOnAirPlatform && playerBelow && playerOnGround) {
+                            e._dynLeapJumpPower = e.leapJumpPower * 0.35;
+                            e._dynLeapSpeed     = 0;
+                            e.isLeapWindup      = true;
+                            e.leapWindupTimer   = e.leapWindup;
+                            e.direction         = bdx >= 0 ? 'right' : 'left';
+                            e.dx                = 0;
+                            e._forceLeapCooldown = 90;
+                            e._leapIgnorePlatforms = true;
+                        }
+                    }
+                }
+
+                if (!e.isLeapWindup) {
+                    const atk1Ready = e.cooldownTimer    <= 0 && inAtk1Range;
+                    const atk2Ready = e._atk2CooldownTimer <= 0 && inAtk1Range && !e._atk2Active;
+
+                    if ((atk1Ready || atk2Ready) && e.attackTimer <= 0 && !e._atk2Active) {
+                        e.direction = bdx >= 0 ? 'right' : 'left';
+
+                        // 둘 다 준비됐으면 쿨타임이 더 낮은(먼저 만료된) 쪽 우선
+                        // cooldownTimer와 _atk2CooldownTimer 중 더 작은 쪽 발동
+                        // 같으면 랜덤
+                        let fireAtk1;
+                        if (atk1Ready && !atk2Ready)       fireAtk1 = true;
+                        else if (!atk1Ready && atk2Ready)  fireAtk1 = false;
+                        else /* 둘 다 준비 */
+                            fireAtk1 = e.cooldownTimer <= e._atk2CooldownTimer
+                                ? Math.random() < 0.5   // 동시 만료: 랜덤
+                                : e.cooldownTimer < e._atk2CooldownTimer;
+
+                        if (fireAtk1) {
+                            e.cooldownTimer   = e.attackCooldown;
+                            e.state           = 'attack';
+                            e.attackTimer     = 60;
+                            e._atk1DelayTotal = 45;
+                            e._atk1HitDone    = false;
+                            e.dx              = 0;
+                            e._atk3IdleTimer  = 0;
+                        } else {
+                            e._atk2CooldownTimer = e.atk2Cooldown;
+                            e._atk2Active      = true;
+                            e._atk2Windup      = true;
+                            e._atk2WindupTimer = e.atk2Windup;
+                            e._atk2DashDir     = e.direction === 'right' ? 1 : -1;
+                            e.state            = 'attack';
+                            e.dx               = 0;
+                            e._atk3IdleTimer   = 0;
+                        }
+
+                    } else if (
+                        // ── 공격3 발동 조건 (쿨타임 + 착지 중 — 사거리 무관)
+                        e._atk3Phase === 'none' &&
+                        e._atk3CooldownTimer <= 0 &&
+                        e.grounded
+                    ) {
+                        // 가까울수록 dx 감소: 200px 이내면 최소 4, 멀수록 최대 16
+                        const atk3DxRaw = Math.min(16, Math.max(4, absDX / 20));
+                        e._atk3Phase           = 'jump';
+                        e._atk3TargetX         = player.x + player.width / 2;
+                        e._atk3DashDir         = bdx >= 0 ? 1 : -1;
+                        e.direction            = bdx >= 0 ? 'right' : 'left';
+                        e.dx                   = e._atk3DashDir * atk3DxRaw;
+                        // X거리가 짧을 때(attackRange 이하)만 최소 높이 보장, 그 외엔 고정 -26
+                        e.dy = (absDX <= e.attackRange) ? -22 : -26;
+                        e._leapIgnorePlatforms = true;
+                        e._atk3IdleTimer       = 0;
+                        e.state                = 'jump1';
+
+                    } else if (e.grounded && e.leapTimer <= 0 &&
+                               absDX >= e.attackRange && absDX < 1000) {
+                        // 일반 도약 (공격2 범위 바깥)
+                        const leapRatio     = Math.min(1, absDX / 900);
+                        const hBonus        = bdy < -60 ? Math.min(6, absDY / 50) : 0;
+                        e._dynLeapJumpPower = Math.min(e.leapJumpPower + leapRatio * 10 + hBonus, 26);
+                        e._dynLeapSpeed     = Math.min(e.leapSpeed     + leapRatio * 8,  21);
+                        e.isLeapWindup    = true;
+                        e.leapWindupTimer = e.leapWindup;
+                        e.direction       = bdx >= 0 ? 'right' : 'left';
+                        e.dx = 0;
+
+                    } else {
+                        // 일반 이동
+                        const nearX = absDX < e.attackRange;
+                        if (nearX) {
+                            e.state = 'idle';
+                            e.dx    = 0;
+                        } else {
+                            e.state = 'walk';
+                            e.dx    = (bdx >= 0 ? 1 : -1) * e.speed;
+                        }
+                        e.direction = bdx >= 0 ? 'right' : 'left';
+                    }
+                }
+            }
+
+            e.x += e.dx;
+            e.y += e.dy;
+
+            e.grounded = false;
+            platforms.forEach(plat => {
+                const pt = plat.type || 'platform';
+                if (pt === 'wall') {
+                    if (e.x + e.width  > plat.x && e.x < plat.x + plat.width &&
+                        e.y + e.height > plat.y && e.y < plat.y + plat.height) {
+                        if (e.dx > 0) e.x = plat.x - e.width;
+                        else          e.x = plat.x + plat.width;
+                        e.dx = 0;
+                    }
+                } else if (pt === 'solid' || pt === 'platform') {
+                    if (pt === 'platform' && e._leapIgnorePlatforms) return;
+                    if (e.x + e.width  > plat.x &&
+                        e.x            < plat.x + plat.width &&
+                        e.y + e.height >= plat.y &&
+                        e.y + e.height <= plat.y + Math.max(20, e.dy + 1) &&
+                        e.dy >= 0) {
+                        e.y        = plat.y - e.height;
+                        e.dy       = 0;
+                        e.grounded = true;
+                        e._leapIgnorePlatforms = false;
+                    }
+                }
+            });
+        }
         // ── enemy3 (궁수) ─────────────────────────────────────────
         if (e.type === 'enemy3') {
             // 중력 적용 (지면에 서있도록)
@@ -3322,7 +5622,7 @@ function updateEnemies() {
             e.grounded = false;
             platforms.forEach(plat => {
                 const type = plat.type || 'platform';
-                if (type === 'solid') {
+                if (type === 'solid' || type === 'platform') {
                     if (e.x + e.width  > plat.x &&
                         e.x            < plat.x + plat.width &&
                         e.y + e.height >= plat.y &&
@@ -3597,6 +5897,243 @@ function drawEnemies() {
             return;  // enemy2 렌더링 종료
         }
 
+        // ── boss 전용 렌더링 ──────────────────────────────────────
+        if (e.type === 'boss') {
+            // ── 이미지 키 + 스케일 선택 ──────────────────────────
+            // 기준: 히트박스 높이(e.height=130)가 캐릭터 본체 높이와 일치하도록
+            // 각 스프라이트별 (imgW/imgH) × (hb / charRatio) 로 drawW/drawH 산출
+            // charRatio = 이미지 높이 대비 캐릭터 본체 높이 비율
+            // ─────────────────────────────────────────────────────
+            // sprite       imgW  imgH  charRatio → drawH  drawW
+            // atk1_1        578   409    0.90     → 144    204
+            // atk1_2       1770  1219    0.65     → 200    290
+            // atk1_3        517   294    0.80     → 163    286   ← 후딜
+            // atk2_1        584   341    0.88     → 148    253   ← 공격2 딜레이
+            // atk2_2        674   305    0.75     → 173    383   ← 공격2 돌진
+            // jump1         457   451    0.88     → 148    150
+            // jump2         500   500    0.82     → 159    159
+            // stand/move: 기본 1.3× 스케일 유지
+            // ─────────────────────────────────────────────────────
+
+            let bossImgKey;
+            let drawW, drawH;
+            const BH = e.height;   // 히트박스 높이 = 130
+
+            if (e._atk3Phase === 'windup') {
+                // 공중 정지 예고: boss_attack3_1 (1.2× 스케일)
+                bossImgKey = e.imgAtk3_1;
+                drawH = (BH / 0.80) * 1.44;           // 기존 × 1.2 = 1.2배 확대
+                drawW = drawH * (239 / 518);          // 종횡비 유지
+
+            } else if (e._atk3Phase === 'strike') {
+                // 내려찍기: boss_attack3_2
+                bossImgKey = e.imgAtk3_2;
+                drawH = (BH / 0.75) * 1.3 * 0.85;       // ≈191
+                drawW = (BH * 0.80 * 1.3) * 1.3 * 0.85; // ≈150
+
+            } else if (e._atk3Phase === 'post') {
+                // 후딜: atk1_3 재활용
+                bossImgKey = e.imgAtk1_3;
+                drawH = BH / 1.00;
+                drawW = drawH * (517 / 294);
+
+            } else if (e._atk3Phase === 'jump') {
+                // 점프 비행: 기존 jump1/jump2
+                bossImgKey = e.dy < 0 ? e.imgJump1 : e.imgJump2;
+                drawH = BH / 0.88;
+                drawW = drawH * (457 / 451);
+
+            } else if (e._atk2Dashing) {
+                // 공격2 돌진: atk2_2 (기존×0.85)
+                bossImgKey = e.imgAtk2_2;
+                drawH = (BH / 0.9375) * 0.85;   // ≈118
+                drawW = drawH * (674 / 305);
+
+            } else if (e._atk2PostTimer > 0) {
+                // 공격2 후딜레이: atk2_2 유지 (기존×0.85)
+                bossImgKey = e.imgAtk2_2;
+                drawH = (BH / 0.9375) * 0.85;
+                drawW = drawH * (674 / 305);
+
+            } else if (e._atk2Windup) {
+                // 공격2 선딜: atk2_1 (기존×0.85)
+                bossImgKey = e.imgAtk2_1;
+                drawH = BH * (9 / 8) * 0.85;   // ≈124
+                drawW = drawH * (584 / 341);
+
+            } else if (e.state === 'attack' && e._atk1DelayTotal !== undefined) {
+                // 공격1 3단계
+                const hitFrame = 60 - e._atk1DelayTotal;   // = 15
+                if (e.attackTimer > hitFrame) {
+                    // 선딜: atk1_1 (크기 유지)
+                    bossImgKey = e.imgAtk1_1;
+                    drawH = BH / 0.90;   // ≈144
+                    drawW = drawH * (578 / 409);  // ≈204
+                } else if (e.attackTimer > 8) {
+                    // 타격: atk1_2 (×0.80)
+                    bossImgKey = e.imgAtk1_2;
+                    drawH = BH / 0.8125;   // ≈160
+                    drawW = drawH * (1770 / 1219);  // ≈232
+                } else {
+                    // 후딜: atk1_3 (×0.80)
+                    bossImgKey = e.imgAtk1_3;
+                    drawH = BH / 1.00;   // =130
+                    drawW = drawH * (517 / 294);  // ≈229
+                }
+
+            } else if (e.isLeapWindup || (e.isLeaping && e.dy < 0) || (!e.grounded && e.dy < 0)) {
+                // 점프 상승: jump1
+                bossImgKey = e.imgJump1;
+                drawH = BH / 0.88;   // ≈148
+                drawW = drawH * (457 / 451);  // ≈150
+
+            } else if (e.isLeaping || !e.grounded) {
+                // 점프 하강: jump2
+                bossImgKey = e.imgJump2;
+                drawH = BH / 0.82;   // ≈159
+                drawW = drawH * (500 / 500);  // ≈159
+
+            } else {
+                // 이동/대기
+                bossImgKey = e.state === 'walk' ? e.imgMove : e.imgStand;
+                drawH = e.state === 'walk' ? BH * 1.105 : BH * 1.3;  // move×0.85, stand 유지
+                drawW = drawH;
+            }
+
+            // 발 위치 고정 기준으로 drawX, drawY 결정
+            // X: 히트박스 중심과 스프라이트 중심을 맞춤
+            const drawX = e.x + e.width / 2 - drawW / 2;
+            const drawY = (e.y + e.height) - drawH;   // 발 위치 고정
+
+            const bImg   = sprites[bossImgKey];
+            const hasImg = bImg && bImg.complete && bImg.naturalWidth !== 0;
+
+            ctx.save();
+            ctx.globalAlpha = deadAlpha;
+
+            if (hasImg) {
+                if (e.direction === 'right') {
+                    ctx.translate(drawX + drawW, drawY);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(bImg, 0, 0, drawW, drawH);
+                } else {
+                    ctx.drawImage(bImg, drawX, drawY, drawW, drawH);
+                }
+            } else {
+                // fallback: 단색 직사각형
+                const bossColor = e.state === 'attack' ? '#ff2222'
+                                : e.state === 'jump1'  ? '#ff8800'
+                                : e.state === 'jump2'  ? '#ffaa00'
+                                : e.state === 'walk'   ? '#cc2244'
+                                :                        '#881122';
+                ctx.fillStyle = bossColor;
+                ctx.fillRect(drawX, drawY, drawW, drawH);
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 11px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`BOSS [${e.state}]`, drawX + drawW / 2, drawY + drawH / 2 + 4);
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = '14px monospace';
+                ctx.fillText(e.direction === 'right' ? '▶' : '◀', drawX + drawW / 2, drawY + 16);
+                ctx.textAlign = 'left';
+            }
+
+            ctx.restore();
+
+            // ── 공격1 예고 표시기 ──────────────────────────────────
+            if (e.state === 'attack' && e._atk1DelayTotal !== undefined && !e._atk1HitDone) {
+                const hitFrame   = 60 - e._atk1DelayTotal;   // = 15
+                const delayLeft  = e.attackTimer - hitFrame;
+                if (delayLeft > 0) {
+                    const alpha      = (delayLeft / e._atk1DelayTotal) * 0.55;
+                    const atk1RangeX = 280;
+                    const atk1RangeY = e.height * 0.45;
+                    // 판정: pCenterX 기준 → 표시는 플레이어 중심이 박스 안에 들어오는 범위
+                    // 보스 본체(e.x) 기준, 방향에 따라 280px
+                    const indX = e.direction === 'right'
+                        ? e.x
+                        : e.x + e.width - atk1RangeX;
+                    // Y: 보스 중심 ± atk1RangeY (pCenterY 기준 판정과 동일)
+                    const indY = e.y + e.height / 2 - atk1RangeY;
+                    const indH = atk1RangeY * 2;
+
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle   = '#ff2020';
+                    ctx.fillRect(indX, indY, atk1RangeX, indH);
+                    ctx.globalAlpha = Math.min(1, alpha * 2);
+                    ctx.strokeStyle = '#ff6060';
+                    ctx.lineWidth   = 2;
+                    ctx.strokeRect(indX, indY, atk1RangeX, indH);
+                    ctx.restore();
+                }
+            }
+
+            // ── 공격3 예고 표시기 (windup 중 — 수직 낙하 궤도 박스) ──────
+            if (e._atk3Phase === 'windup') {
+                const ratio  = e._atk3WindupTimer / e.atk3WindupDur;
+                const alpha  = (1 - ratio) * 0.75;   // 시간이 지날수록 진해짐
+
+                // windup 위치 기준 수직 낙하 궤도
+                const bossTopY  = e.y;                      // 보스 머리 위치
+                const groundY   = world.height - 60;        // 바닥 Y
+                const centerX   = e.x + e.width / 2;       // 보스 중심 X (windup 고정 위치)
+
+                // 궤도 박스: 보스 width보다 조금 큰 너비, 보스 머리 ~ 바닥
+                const halfW = e.width / 2 + 16;   // 보스 width(100) 기준 양옆 +16 = 총 132
+                const boxX = centerX - halfW;
+                const boxW = halfW * 2;
+                const boxY = bossTopY;
+                const boxH = groundY - bossTopY;
+
+                ctx.save();
+
+                // 박스 내부 (반투명 채우기)
+                ctx.globalAlpha = alpha * 0.35;
+                ctx.fillStyle   = '#cc44ff';
+                ctx.fillRect(boxX, boxY, boxW, boxH);
+
+                // 박스 테두리
+                ctx.globalAlpha = alpha * 0.9;
+                ctx.strokeStyle = '#ff88ff';
+                ctx.lineWidth   = 4;
+                ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+                ctx.restore();
+            }
+
+            // ── 공격2 예고 표시기 (딜레이 중) ─────────────────────
+            // 실제 돌진 거리: v0*(1-r^n)/(1-r) ≈ 305px (감쇄 기반 계산)
+            if (e._atk2Windup) {
+                const ratio  = e._atk2WindupTimer / e.atk2Windup;
+                const alpha  = ratio * 0.5;
+                // 실제 도달 거리 (등비수열 합)
+                const dashDist = Math.round(
+                    e.atk2DashSpeed * (1 - Math.pow(e.atk2DashDecay, e.atk2DashFrames))
+                    / (1 - e.atk2DashDecay)
+                );
+                // 판정은 보스 본체 AABB 기준이므로 표시도 보스 폭 포함
+                const dashW  = dashDist + e.width;
+                const dashH  = e.height;   // 보스 본체 전체 높이
+                const dashX  = e._atk2DashDir > 0
+                    ? e.x                        // 오른쪽: 현재 위치부터
+                    : e.x - (dashDist);          // 왼쪽: 이동 후 끝점부터
+                const dashY  = e.y;              // 보스 발 위치 기준
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle   = '#ff8800';
+                ctx.fillRect(dashX, dashY, dashW, dashH);
+                ctx.globalAlpha = Math.min(1, alpha * 2.5);
+                ctx.strokeStyle = '#ffcc44';
+                ctx.lineWidth   = 2;
+                ctx.strokeRect(dashX, dashY, dashW, dashH);
+                ctx.restore();
+            }
+
+            return;  // boss 렌더링 종료
+        }
+
         // ── enemy3 (궁수) 전용 렌더링 ────────────────────────────
         if (e.type === 'enemy3') {
             // ★ 스케일 기준점: ENEMY_TYPES.enemy3 의 width/height (현재 120/150)
@@ -3753,6 +6290,90 @@ const ultimate = {
     alpha:    0
 };
 
+// ── 보스 공격1 돌 파티클 ─────────────────────────────────────────
+const bossStoneParticles = [];
+
+function spawnBossStoneParticles(bossFrontX, atk1RangeX, hitTop, hitBottom) {
+    // 공격 범위 내 5개, 균등 간격 + 랜덤 오프셋
+    const count   = 5;
+    const segW    = atk1RangeX / count;
+    const groundY = hitBottom;
+    for (let i = 0; i < count; i++) {
+        const baseX  = bossFrontX + segW * i + segW * 0.5;
+        const rx     = (Math.random() - 0.5) * segW * 0.6;
+        const spawnX = baseX + rx;
+        const spawnY = groundY;
+
+        // 2~3개 파편 (기존 3~5의 70%)
+        const fragCount = 2 + Math.floor(Math.random() * 2);
+        for (let f = 0; f < fragCount; f++) {
+            const speedX  = (Math.random() - 0.5) * 14;
+            const speedY  = -(8 + Math.random() * 9);   // 높이 복원
+            const gray    = 110 + Math.floor(Math.random() * 90);
+            const color   = `rgb(${gray},${gray - 15},${gray - 25})`;
+            const maxLife = 0.85 + Math.random() * 0.3;
+            bossStoneParticles.push({
+                x:        spawnX,
+                y:        spawnY,
+                dx:       speedX,
+                dy:       speedY,
+                life:     maxLife,
+                maxLife,
+                decay:    0.018 + Math.random() * 0.012,
+                size:     5 + Math.random() * 9,
+                color,
+                rot:      Math.random() * Math.PI * 2,
+                rotSpeed: (Math.random() - 0.5) * 0.45,
+            });
+        }
+    }
+}
+
+function updateBossStoneParticles() {
+    for (let i = bossStoneParticles.length - 1; i >= 0; i--) {
+        const p  = bossStoneParticles[i];
+        p.x     += p.dx;
+        p.y     += p.dy;
+        p.dy    += 0.55;   // 중력 (강하게)
+        p.dx    *= 0.97;   // 공기 저항 (적게 — 멀리 날아감)
+        p.rot   += p.rotSpeed;
+        p.life  -= p.decay;
+        if (p.life <= 0) bossStoneParticles.splice(i, 1);
+    }
+}
+
+function drawBossStoneParticles() {
+    if (bossStoneParticles.length === 0) return;
+    ctx.save();
+    bossStoneParticles.forEach(p => {
+        // 하강 후반부(life 하위 35%)에서만 빠르게 페이드아웃
+        const fadeThreshold = p.maxLife * 0.35;
+        const alpha = p.life > fadeThreshold
+            ? 1.0
+            : Math.max(0, p.life / fadeThreshold);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = p.color;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        const s = p.size;
+        ctx.beginPath();
+        ctx.moveTo(-s,       -s * 0.4);
+        ctx.lineTo( s * 0.6, -s);
+        ctx.lineTo( s,        s * 0.5);
+        ctx.lineTo(-s * 0.4,  s);
+        ctx.closePath();
+        ctx.fill();
+        // 밝은 하이라이트 엣지
+        ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.4})`;
+        ctx.lineWidth   = 1.2;
+        ctx.stroke();
+        ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
+}
+
 const ultParticles = [];
 const slashEffects = [];
 let ULT_TIMELINE = [];
@@ -3840,10 +6461,46 @@ function spawnCross(cx, cy) {
     });
 }
 
+// ── 보스 attack2 돌진 속도선 이펙트 ──────────────────────────────
+function spawnBossDashSlash(e) {
+    const dir = e._atk2DashDir;   // +1 오른쪽, -1 왼쪽
+    const bossL = e.x;
+    const bossR = e.x + e.width;
+    const bossT = e.y;
+    const bossB = e.y + e.height;
+
+    // 한 번 호출에 일자선 2~3개 스폰 (세로 위치 분산)
+    const lineCount = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < lineCount; i++) {
+        // Y: 보스 몸통 내 랜덤 위치
+        const cy = bossT + (bossB - bossT) * (0.15 + Math.random() * 0.70);
+        // X: 보스 뒤쪽에서 시작 (이미 지나쳐온 궤적 느낌)
+        const cx = dir > 0 ? bossL + Math.random() * e.width * 0.5
+                           : bossR - Math.random() * e.width * 0.5;
+
+        const len    = 60 + Math.random() * 90;   // 선 길이
+        const speed  = Math.abs(e.dx);             // 현재 속도 반영
+
+        slashEffects.push({
+            type:    'bossDash',
+            cx, cy,
+            dir,     // 방향
+            len,
+            speed,
+            life:    1.0,
+            decay:   0.16 + Math.random() * 0.08,  // 빠르게 사라짐
+            thick:   1.5 + Math.random() * 2.5,    // 선 두께
+        });
+    }
+}
+
 function updateSlashEffects() {
     for (let i = slashEffects.length - 1; i >= 0; i--) {
         const s = slashEffects[i];
-        if (s.drawProgress < 1) {
+        if (s.type === 'bossDash') {
+            // 속도선은 drawProgress 없이 바로 페이드
+            s.life -= s.decay;
+        } else if (s.drawProgress < 1) {
             s.drawProgress = Math.min(s.drawProgress + s.drawSpeed, 1);
         } else {
             s.life -= s.decay;
@@ -3911,7 +6568,7 @@ function drawSingleSlash(s) {
 function drawSlashEffects() {
     slashEffects.forEach(s => {
         ctx.save();
-        ctx.globalAlpha = s.drawProgress < 1 ? 1 : s.life * s.life;
+        ctx.globalAlpha = s.type === 'bossDash' ? 1 : (s.drawProgress < 1 ? 1 : s.life * s.life);
         ctx.translate(s.cx, s.cy);
 
         if (s.type === 'slash') {
@@ -3919,6 +6576,32 @@ function drawSlashEffects() {
         } else if (s.type === 'cross') {
             ctx.save(); ctx.rotate( 30 * Math.PI / 180); drawSingleSlash(s); ctx.restore();
             ctx.save(); ctx.rotate(-30 * Math.PI / 180); drawSingleSlash(s); ctx.restore();
+        } else if (s.type === 'bossDash') {
+            // 일자 속도선 (이미 ctx.translate(s.cx, s.cy) 적용된 상태)
+            const alpha = s.life * s.life;
+            const dir   = s.dir;
+            const len   = s.len;
+            const thick = s.thick;
+
+            ctx.globalAlpha = alpha;
+
+            // 글로우 외곽선
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-dir * len, 0);
+            ctx.strokeStyle = 'rgba(200,225,255,0.4)';
+            ctx.lineWidth   = thick * 4;
+            ctx.lineCap     = 'round';
+            ctx.stroke();
+
+            // 핵심 흰 선
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-dir * len, 0);
+            ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+            ctx.lineWidth   = thick;
+            ctx.lineCap     = 'round';
+            ctx.stroke();
         }
 
         ctx.restore();
@@ -4226,14 +6909,16 @@ function startTutorialIntro() {
 function _snapCameraToPlayer() {
     const lW = canvas.width  / SCALE;
     const lH = canvas.height / SCALE;
-    // 논리 뷰가 월드보다 넓어질 경우 중앙 고정 (맵 밖 노출 방지)
     if (lW >= world.width) {
         camera.x = (world.width - lW) / 2;
     } else {
         camera.x = Math.max(0, Math.min(player.x + player.width  / 2 - lW / 2, world.width  - lW));
     }
-    if (lH >= world.height) {
-        cameraY = (world.height - lH) / 2;
+    // 보스맵: 카메라 Y를 바닥 기준으로 고정
+    if (currentMapIndex === 13) {
+        cameraY = Math.max(0, world.height - lH);
+    } else if (lH >= world.height) {
+        cameraY = 0;
     } else {
         cameraY = Math.max(0, Math.min(player.y + player.height / 2 - lH / 2, world.height - lH));
     }
@@ -4832,7 +7517,70 @@ function drawTeleHint() {
 }
 
 
-function drawIntroHint() {    if (introSeq.phase !== 'hint') return;
+// ── 세이브포인트 도달 힌트 렌더링 ────────────────────────────────────
+function drawSavepointHint() {
+    if (!savepointHint.active || currentMapIndex !== 8) return;
+
+    savepointHint.blinkTimer++;
+    const blink = Math.floor(savepointHint.blinkTimer / 25) % 2 === 0;
+    if (!blink) return;
+
+    const lines  = ['세이브 포인트에 도달했습니다.', '사망시 이곳에서 부활하게 됩니다.'];
+    const fontH  = 38;
+    ctx.font     = `bold ${fontH}px ${DIALOGUE_FONT}`;
+
+    const lineH  = fontH + 14;
+    const boxPad = 32;
+    const maxW   = Math.max(...lines.map(t => ctx.measureText(t).width));
+    const boxW   = maxW + boxPad * 2;
+    const boxH   = lineH * lines.length + 16;
+    const boxX   = (LOGICAL_W - boxW) / 2;
+    const boxY   = LOGICAL_H - 200;
+
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle   = 'rgba(8, 8, 24, 0.9)';
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160, 200, 255, 0.55)';
+    ctx.lineWidth   = 1.5;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.stroke();
+    ctx.restore();
+
+    lines.forEach((text, i) => {
+        const ty = boxY + 20 + fontH + i * lineH;
+        ctx.save();
+        ctx.font         = `bold ${fontH}px ${DIALOGUE_FONT}`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle  = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth    = 5;
+        ctx.lineJoin     = 'round';
+        ctx.strokeText(text, LOGICAL_W / 2, ty);
+        ctx.fillStyle    = 'rgba(210, 230, 255, 1)';
+        ctx.fillText(text,   LOGICAL_W / 2, ty);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+        ctx.restore();
+    });
+}
+
+// ── 세이브포인트 맵 업데이트 (대화 종료 감지 → 이펙트+힌트) ─────────────
+function updateSavepointMap() {
+    savepointEffect.update();
+    if (currentMapIndex !== 8) return;
+    // 최초 방문: NPC 대화가 끝난 순간에 이펙트 + 힌트 발동
+    if (savepointHint.shown && !savepointHint.dialogueDone && !dialogue.active) {
+        savepointHint.dialogueDone = true;
+        savepointHint.active       = true;
+        savepointHint.blinkTimer   = 0;
+        savepointEffect.trigger();
+    }
+}
+
+function drawIntroHint() {
+    if (introSeq.phase !== 'hint') return;
 
     const blink = Math.floor(introSeq.hintBlink / 25) % 2 === 0;
     if (!blink) return;
@@ -4999,6 +7747,632 @@ MAP_DATA.push({
         player.grounded = false;
     }
 });
+
+// ── 맵 4: 절벽 위 (맵3 천장 점프로 진입 / 구멍으로 낙하하면 맵3 복귀) ──────
+// 가로 1280, 세로 600. 바닥 중앙(x=400~880)에 구멍 — 맵3 천장과 연결
+// 구멍을 제외한 바닥(양쪽), 상단 발판군, 왼쪽/오른쪽 벽으로 구성
+MAP_DATA.push({
+    id: 4,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',   // 맑은 하늘빛 (절벽 꼭대기 느낌)
+    keepClearedEnemiesDead: true,
+
+    spawnX: 600,
+    spawnY: 60,   // ceilingTransition에서 덮어쓰므로 기본값만
+
+    platforms: [
+        // ── 왼쪽/오른쪽 벽 ──────────────────────────────────────────
+        { x: -60,  y: 0, width: 60,  height: 720, type: 'wall' },
+        { x: 2880, y: 0, width: 60,  height: 720, type: 'wall' },
+
+        // ── 바닥: 구멍(x=0~400)은 맨 왼쪽 — 오른쪽 바닥만 존재 ────────
+        { x: 400, y: 660, width: 2480, height: 60, type: 'solid' },
+
+        // ── 중층 발판 (간격 넓게 복구) ───────────────────────────────
+        { x: 700,  y: 500, width: 200, height: 18, type: 'platform' },
+        { x: 1300, y: 430, width: 200, height: 18, type: 'platform' },
+        { x: 1950, y: 500, width: 200, height: 18, type: 'platform' },
+
+        // ── 오른쪽 끝 높은 플랫폼 (시야에 보이지만 플레이어 도달 불가) ──
+        { x: 2560, y: 160, width: 260, height: 18, type: 'platform' },
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        // 지상 몹1 — 구멍(x=0~400)에서 충분히 멀리 배치 (배회범위 ±180 고려)
+        { type: 'enemy1', x: 1000, y: 660 },
+        { type: 'enemy1', x: 1700, y: 660 },
+        // 중층 플랫폼 위 몹1
+        { type: 'enemy1', x: 1350, y: 430 },
+        { type: 'enemy1', x: 2000, y: 500 },
+        // 높은 플랫폼 위 몹1
+        { type: 'enemy1', x: 2620, y: 160 },
+    ],
+    dummies: [],
+
+    // 맵4는 일반 transition 없음 — 구멍 낙하는 checkMap4PitFall() 에서 처리
+    transitions: [
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 5, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        // ceilingTransition.switch 단계에서 직접 좌표 설정하므로 여기선 리셋만
+        player.dx      = 0;
+        player.grounded = false;
+    }
+});
+
+MAP_DATA.push({
+    id: 5,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        // ── 중층 발판 (간격 넓게) ─────────────────────────────────────
+        { x: 450,  y: 500, width: 200, height: 18, type: 'platform' },
+        { x: 1100, y: 430, width: 200, height: 18, type: 'platform' },
+        { x: 1700, y: 490, width: 200, height: 18, type: 'platform' },
+
+        // ── enemy3 2마리가 올라서는 오른쪽 끝 플랫폼 ──────────────────
+        { x: 2260, y: 380, width: 380, height: 18, type: 'platform' },
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        // enemy3: 오른쪽 끝 플랫폼 위 2마리 (플랫폼 y=380)
+        { type: 'enemy3', x: 2310, y: 380 },
+        { type: 'enemy3', x: 2510, y: 380 },
+
+        // enemy1: 지상
+        { type: 'enemy1', x:  600, y: 660 },
+        { type: 'enemy1', x:  900, y: 660 },
+        { type: 'enemy1', x: 1200, y: 660 },
+        // 중층 플랫폼 위 enemy1 (플랫폼 y=430)
+        { type: 'enemy1', x: 1150, y: 430 },
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 4, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 6, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+MAP_DATA.push({
+    id: 6,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        // ── 왼쪽 구간 발판 ────────────────────────────────────────────
+        { x: 300,  y: 510, width: 200, height: 18, type: 'platform' },
+        { x: 750,  y: 440, width: 180, height: 18, type: 'platform' },
+
+        // ── 계단식 플랫폼 4단 (오른쪽으로 갈수록 높아짐) ──────────────
+        { x: 1200, y: 560, width: 200, height: 18, type: 'platform' },  // 1단
+        { x: 1560, y: 460, width: 200, height: 18, type: 'platform' },  // 2단
+        { x: 1920, y: 360, width: 200, height: 18, type: 'platform' },  // 3단
+        { x: 2280, y: 260, width: 200, height: 18, type: 'platform' },  // 4단 (최상단)
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        // enemy3: 계단 최상단(4단 y=260) 위 1마리
+        { type: 'enemy3', x: 2340, y: 260 },
+
+        // enemy2: 계단 1~3단 위 (gravity=0, y=플랫폼y로 자연스럽게 뜸)
+        { type: 'enemy2', x: 1260, y: 560 },
+        { type: 'enemy2', x: 1620, y: 460 },
+        { type: 'enemy2', x: 1980, y: 360 },
+
+        // enemy1: 지상 + 왼쪽 발판 위
+        { type: 'enemy1', x:  400, y: 660 },
+        { type: 'enemy1', x:  350, y: 510 },
+        { type: 'enemy1', x:  800, y: 440 },
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 5, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 7, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+MAP_DATA.push({
+    id: 7,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
+        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
+        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
+        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
+        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        { type: 'enemy1', x: 1450, y: 660 }
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 6, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 8, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+// ── 맵 8: 세이브포인트 (뷰포트 1280×720에 맞춰 배경 꽉 채움, 카메라 고정) ──
+MAP_DATA.push({
+    id: 8,
+    worldWidth:  1280,
+    worldHeight: 720,
+    bgColor: '#87CEEB',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 1280, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 1280, height: 60,  type: 'solid' },
+    ],
+
+    signs: [
+        {
+            // 세이브포인트 NPC — 맵 오른쪽 40% 지점 (x≈768), 바닥(y=660)에 발 맞춤
+            x: 730, y: 536,
+            width: 78, height: 124,
+            interactRange: 130,
+            isNpc: true,          // sign과 구분하는 플래그
+            imgKey: 'NPC1_STORY', // 이미지가 없으면 직사각형 폴백
+            direction: 'left',    // 플레이어 쪽(왼쪽)을 바라봄
+            cast: ['STORY1', 'NPC1_STORY'],
+            dialogue: [
+                { speaker: 'NPC',  text: '이곳에 오시다니 고생이 많으셨겠군요.',         speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                { speaker: '???',  text: '당신은 누구입니까?',                            speakerType: 'player', illustKey: 'STORY1' },
+                { speaker: 'NPC',  text: '저는 이 세이브 포인트를 지키는 자입니다.',       speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                { speaker: 'NPC',  text: '이곳에서 쉬다 가세요. 당신의 여정을 응원합니다.', speakerType: 'npc',   illustKey: 'NPC1_STORY' },
+                { speaker: '???',  text: '...감사합니다.',                                 speakerType: 'player', illustKey: 'STORY1' },
+            ]
+        }
+    ],
+    spikes:  [],
+    enemies: [],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 7, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 1260, y: 540,
+            width: 40, height: 120,
+            toMap: 9, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+
+        if (!savepointHint.shown) {
+            // ── 최초 방문: NPC 대화 먼저, 대화 종료 후 이펙트+힌트는 updateSavepointMap()에서 처리 ──
+            savepointHint.shown       = true;
+            savepointHint.dialogueDone = false;
+            savepointHint.active      = false;
+            dialogue.active      = true;
+            dialogue.cast        = ['STORY1', 'NPC1_STORY'];
+            dialogue.lines       = [
+                { speaker: 'NPC',      text: '어서오세요. 이곳은 세이브 포인트입니다.',          speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                { speaker: 'NPC',      text: '이 자리에서 힘을 회복하고 떠나세요.',               speakerType: 'npc',    illustKey: 'NPC1_STORY' },
+                { speaker: 'NPC',      text: '만약 쓰러지더라도, 이곳에서 다시 깨어날 수 있을 겁니다.', speakerType: 'npc', illustKey: 'NPC1_STORY' },
+                { speaker: '???',      text: '...감사합니다.',                                    speakerType: 'player', illustKey: 'STORY1' },
+            ];
+            dialogue.currentLine = 0;
+            dialogue.speakerName = dialogue.lines[0].speaker;
+            dialogue.speakerType = dialogue.lines[0].speakerType;
+            dialogue.illustKey   = dialogue.lines[0].illustKey;
+            dialogue.displayText = '';
+            dialogue.charIndex   = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished  = false;
+        } else {
+            // ── 재방문: 맵 전환 완료 후 이펙트 + HP 회복 (pending으로 지연 발동) ──
+            savepointEffect.pending = true;
+        }
+    }
+});
+
+// ── 맵 9: 세이브 이후 구간 1 ────────────────────────────────────────────
+MAP_DATA.push({
+    id: 9,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
+        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
+        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
+        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
+        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        { type: 'enemy1', x: 1440, y: 660 }
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 8, spawnX: 1000, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 10, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+// ── 맵 10: 세이브 이후 구간 2 ───────────────────────────────────────────
+MAP_DATA.push({
+    id: 10,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
+        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
+        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
+        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
+        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        { type: 'enemy2', x: 1440, y: 660 }
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 9, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 11, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+// ── 맵 11: 세이브 이후 구간 3 ───────────────────────────────────────────
+MAP_DATA.push({
+    id: 11,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
+        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
+        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
+        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
+        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        { type: 'enemy3', x: 1440, y: 660 }
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 10, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 12, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+// ── 맵 12: 세이브 이후 구간 4 ───────────────────────────────────────────
+MAP_DATA.push({
+    id: 12,
+    worldWidth:  2880,
+    worldHeight: 720,
+    bgColor: '#7ab8e8',
+    keepClearedEnemiesDead: true,
+
+    spawnX: 80,
+    spawnY: 580,
+
+    platforms: [
+        { x: -60,  y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
+        { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
+
+        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
+        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
+        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
+        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
+        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [
+        { type: 'enemy2', x: 1440, y: 660 }
+    ],
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 540,
+            width: 40, height: 120,
+            toMap: 11, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        },
+        {
+            x: 2840, y: 540,
+            width: 40, height: 120,
+            toMap: 13, spawnX: 80, spawnY: 580,
+            direction: 'right',
+            requireClear: true,
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+    }
+});
+
+// ── 맵 13: 보스전 장소 ──────────────────────────────────────────────────
+// 화면 1.5배 너비(1920), 세로도 1.5배(1080) — 천장 없이 카메라 자유 추적
+// 양옆에 위아래 2개씩 플랫폼 배치
+MAP_DATA.push({
+    id: 13,
+    worldWidth:  1920,
+    worldHeight: 1080,
+    bgColor: '#55c0e0',   // BG_PLAIN 이미지 상단 색과 자연스럽게 이어지는 하늘색
+    keepClearedEnemiesDead: true,
+
+    spawnX: 120,
+    spawnY: 940,
+
+    platforms: [
+        // ── 좌우 벽 ────────────────────────────────────────────────────
+        { x: -60,  y: 0, width: 60,   height: 1080, type: 'wall' },
+        { x: 1920, y: 0, width: 60,   height: 1080, type: 'wall' },
+
+        // ── 바닥 (전체) ─────────────────────────────────────────────────
+        { x: 0,    y: 1020, width: 1920, height: 60, type: 'solid' },
+
+        // ── 플랫폼: 중앙에 가까운 좌우 대칭 한 쌍 ──────────────────────
+        { x: 80,   y: 820, width: 560, height: 18, type: 'platform' },   // 왼쪽
+        { x: 1280, y: 820, width: 560, height: 18, type: 'platform' },   // 오른쪽
+    ],
+
+    signs:   [],
+    spikes:  [],
+    enemies: [],   // 보스는 onEnter 대화 종료 후 스폰
+    dummies: [],
+    transitions: [
+        {
+            x: -20, y: 860,
+            width: 40, height: 160,
+            toMap: 12, spawnX: 2760, spawnY: 580,
+            direction: 'left',
+            groundSpawn: true
+        }
+    ],
+
+    onEnter: () => {
+        player.dx       = 0;
+        player.grounded = false;
+        bossMapReached  = true;
+
+        // 기존 BGM 빠르게 페이드아웃
+        bgmPlayer.fadeOutFast(() => { /* 대화 종료 후 보스BGM은 dialogue 끝에서 재생 */ });
+
+        if (!MAP_DATA[13]._introDone) {
+            MAP_DATA[13]._introDone = true;
+            bossHpBar.visible    = false;   // 대화 후 등장
+            dialogue.active      = true;
+            dialogue.cast        = ['STORY1', 'BOSS_STORY1'];
+            dialogue.lines       = [
+                { speaker: '???',      text: '너탁경구.',                speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '너도탁경구.',              speakerType: 'player', illustKey: 'STORY1'      },
+                { speaker: '???',      text: '탁',                   speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',      text: '그 말은 내가 해야 할 것 같은데.', speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '...',                             speakerType: 'player', illustKey: 'STORY1'      },
+                { speaker: '???',      text: '오냐덤벼라.',                         speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+            ];
+            dialogue.currentLine = 0;
+            dialogue.speakerName = dialogue.lines[0].speaker;
+            dialogue.speakerType = dialogue.lines[0].speakerType;
+            dialogue.illustKey   = dialogue.lines[0].illustKey;
+            dialogue.displayText = '';
+            dialogue.charIndex   = 0;
+            dialogue.typingTimer = 0;
+            dialogue.isFinished  = false;
+        } else {
+            // 재진입: 체력바 즉시 표시 + 보스BGM 재생 + 보스 스폰
+            if (!bossHpBar.visible) bossHpBar.startIntro();
+            bgmPlayer.play('BGM_BOSS1', true);
+            // 살아있는 보스가 없으면 재스폰
+            const bossAlive = enemies.some(e => e.type === 'boss' && !e.isDead);
+            if (!bossAlive) enemies.push(createEnemy('boss', 960, 1020));
+        }
+    }
+});
+
 
 // [START] 게임 엔진 구동
 document.fonts.ready.then(() => {
