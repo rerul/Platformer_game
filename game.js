@@ -8349,8 +8349,8 @@ MAP_DATA.push({
             dialogue.lines       = [
                 { speaker: '???',      text: '너탁경구.',                speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
                 { speaker: '플레이어', text: '너도탁경구.',              speakerType: 'player', illustKey: 'STORY1'      },
-                { speaker: '???',      text: '탁',                   speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '???',      text: '그 말은 내가 해야 할 것 같은데.', speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',      text: '아무말',                   speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',      text: '대사가생각나지않음', speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
                 { speaker: '플레이어', text: '...',                             speakerType: 'player', illustKey: 'STORY1'      },
                 { speaker: '???',      text: '오냐덤벼라.',                         speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
             ];
