@@ -4588,15 +4588,15 @@ const ENEMY_TYPES = {
         loseRange:      2000,
         attackRange:    168,  // 공격1 인식사거리
         attackDamage:   18,
-        attackCooldown: 128,  // 공격1 쿨타임 (150 × 0.85)
+        attackCooldown: 130,  // 공격1 쿨타임 (150 × 0.85)
         // 공격2 돌진 파라미터
         atk2Damage:     14,
-        atk2Windup:     40,       // 공격2 딜레이 프레임
+        atk2Windup:     30,       // 공격2 딜레이 프레임
         atk2DashSpeed:  38,       // 돌진 초기 dx
         atk2DashDecay:  0.88,     // 매 프레임 dx에 곱하는 감쇄율
         atk2DashFrames: 35,       // 돌진 지속 프레임
         atk2PostDelay:  20,       // 돌진 후 후딜레이 프레임
-        atk2Cooldown:   170,      // 공격2 전용 쿨타임 (200 × 0.85)
+        atk2Cooldown:   160,      // 공격2 전용 쿨타임 (200 × 0.85)
         // 도약
         leapCooldownMin: 126,
         leapCooldownMax: 294,
@@ -4605,10 +4605,10 @@ const ENEMY_TYPES = {
         leapJumpPower:   14,
         // 공격3 파라미터
         atk3Damage:      22,
-        atk3Cooldown:    450,    // 공격3 전용 쿨타임 (7.5초)
-        atk3IdleNeeded:  120,    // 공격1/2 미발동 필요 프레임 (2초)
+        atk3Cooldown:    600,    // 공격3 전용 쿨타임 (7.5초)
+        atk3IdleNeeded:  60,    // 공격1/2 미발동 필요 프레임 (2초)
         atk3FarDist:     500,    // 발동 최소 거리
-        atk3WindupDur:   40,     // 공중 정지(예고) 프레임
+        atk3WindupDur:   30,     // 공중 정지(예고) 프레임
         atk3StrikeDur:   18,     // 내려찍기 프레임
         atk3PostDur:     30,     // 후딜레이 프레임
         atk3RangeX:      160,    // 착지 지점 기준 좌우 판정 반경
