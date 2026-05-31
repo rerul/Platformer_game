@@ -2676,18 +2676,6 @@ function update() {
         }
     }
 
-    // 6-7b: 2페이즈 저주 — 매초 최대체력 0.5% 도트 피해
-    if (bossPhase2.active && currentMapIndex === 13) {
-        player._p2DotTimer = (player._p2DotTimer || 0) + 1;
-        if (player._p2DotTimer >= 60) {   // 60프레임 = 1초
-            player._p2DotTimer = 0;
-            const dotDmg = Math.max(1, Math.round(player.maxHp * 0.005));
-            player.hp = Math.max(player.hp - dotDmg, 0);
-        }
-    } else {
-        player._p2DotTimer = 0;
-    }
-
     // 6-8: 적 업데이트
     updateEnemies();
     updateDummies();
