@@ -218,6 +218,9 @@ const ASSETS = {
     BOSS_STORY1:     './assets/images/boss_story1.png',
     BOSS_STAND:      './assets/images/boss_stand.png',
     BOSS_STAND2:     './assets/images/boss_stand2.png',
+    BOSS_STAND2_1:   './assets/images/boss_stand2_1.png',
+    BOSS_STAND2_2:   './assets/images/boss_stand2_2.png',
+    BOSS_STAND2_3:   './assets/images/boss_stand2_3.png',
     BOSS_MOVE:       './assets/images/boss_move.png',
     BOSS_ATTACK:     './assets/images/boss_attack.png',
     BOSS_ATTACK1_1:  './assets/images/boss_attack1_1.png',
@@ -1497,7 +1500,13 @@ const bossPhase2 = {
     },
 
     trigger() {
-        if (this.active || this.playing) return;
+        // 중복 방지 제거: 페이즈 전환 시마다 재트리거 허용
+        // 진행 중이면 일단 리셋 후 재시작
+        if (this._video) {
+            this._video.pause();
+            this._video.currentTime = 0;
+        }
+        this.active      = false;
         // 즉시 검정화면으로 전환 (로딩 중 깜빡임 방지)
         this.blackScreen = true;
         this.playing     = false;
@@ -1554,6 +1563,9 @@ const bossPhase2 = {
 const bossHalfSeq = {
     phase:      'idle',
     timer:      0,
+    // stand2 순차 스프라이트 전환용
+    stand2TransTimer: 0,   // stand2 진입 후 경과 프레임
+    STAND2_FRAME_DUR: 54,  // 각 스프라이트 표시 프레임 수 (54프레임 × 3 = 162프레임)
 
     // 클로즈업 파라미터
     ZOOM_SCALE:     BASE_SCALE * 2.2,
@@ -1587,7 +1599,7 @@ const bossHalfSeq = {
     _finished:     false,
 
     trigger() {
-        if (this.phase !== 'idle') return;
+        // 중복 방지 제거: 이미 진행 중이어도 재트리거 허용
         const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
         if (!boss) return;
 
@@ -1612,9 +1624,27 @@ const bossHalfSeq = {
 
         this.phase = 'jump';
         this.timer = 0;
-        this.savedScale  = SCALE;
-        this.savedCamX   = camera.x;
-        this.savedCamY   = cameraY;
+        // 궁극기 줌 진행 중이면 BASE_SCALE / 정상 카메라로 저장 (충돌 방지)
+        if (player.ultPhase !== 'none') {
+            this.savedScale = BASE_SCALE;
+            const _lW = canvas.width  / BASE_SCALE;
+            const _lH = canvas.height / BASE_SCALE;
+            this.savedCamX = Math.max(0, Math.min(player.x + player.width  / 2 - _lW / 2, world.width  - _lW));
+            this.savedCamY = Math.max(0, Math.min(player.y + player.height / 2 - _lH / 2, world.height - _lH));
+            // 궁극기 즉시 종료
+            player.ultPhase = 'none';
+            player.ultTimer = 0;
+            SCALE = BASE_SCALE;
+            camera.x = this.savedCamX;
+            cameraY  = this.savedCamY;
+            ultimate.active = false;
+            slashEffects.length = 0;
+            ultParticles.length = 0;
+        } else {
+            this.savedScale = SCALE;
+            this.savedCamX  = camera.x;
+            this.savedCamY  = cameraY;
+        }
     },
 
     update() {
@@ -1657,14 +1687,38 @@ const bossHalfSeq = {
         } else if (this.phase === 'dialogue') {
             this._updateTyping();
         } else if (this.phase === 'stand2') {
-            // boss_stand2로 전환, 배경 연출 트리거
-            if (boss) {
-                boss.imgStand = boss.imgStand2;   // 스프라이트 교체
-                boss._halfInvincible = true;       // 계속 무적 유지
+            // stand2 첫 진입 시 초기화 + 배경 전환 영상 동시 시작
+            if (this.stand2TransTimer === 0) {
+                // 클로즈업 즉시 해제 — savedScale/savedCam으로 복귀
+                SCALE    = this.savedScale;
+                camera.x = this.savedCamX;
+                cameraY  = this.savedCamY;
+                if (boss) {
+                    boss._halfInvincible = true;
+                    boss.isInvincible    = false;
+                    boss.invincibleTimer = 0;
+                    boss.imgStand = 'BOSS_STAND2_1';
+                }
+                // 배경 전환 영상 즉시 시작 (스프라이트 전환과 동시)
+                bossPhase2.trigger();
             }
-            bossPhase2.trigger();
-            this.phase = 'bgchange';
-            this.timer = 0;
+            this.stand2TransTimer++;
+
+            // 스프라이트 단계별 전환: _1 → _2 → _3
+            if (boss) {
+                const fd = this.STAND2_FRAME_DUR;
+                if      (this.stand2TransTimer < fd)     boss.imgStand = 'BOSS_STAND2_1';
+                else if (this.stand2TransTimer < fd * 2) boss.imgStand = 'BOSS_STAND2_2';
+                else                                     boss.imgStand = 'BOSS_STAND2_3';
+            }
+
+            // 스프라이트 전환 완료 후 bgchange 대기로 전환
+            if (this.stand2TransTimer >= this.STAND2_FRAME_DUR * 3) {
+                if (boss) boss.imgStand = 'BOSS_STAND2_3';
+                this.phase = 'bgchange';
+                this.timer = 0;
+                this.stand2TransTimer = 0;
+            }
         } else if (this.phase === 'bgchange') {
             // 배경 연출(영상+페이드) 완료 대기
             if (!bossPhase2.playing && !bossPhase2.blackScreen && !bossPhase2.fadeIn) {
@@ -1686,7 +1740,16 @@ const bossHalfSeq = {
                 cameraY  = this.savedCamY;
                 this.phase = 'done';
                 this.timer = 0;
-                if (boss) boss._halfInvincible = false;   // 무적 해제
+                if (boss) {
+                    boss._halfInvincible  = false;   // 무적 해제
+                    boss.isInvincible     = false;   // 피격 깜빡임 초기화
+                    boss.invincibleTimer  = 0;
+                    boss._phase2Active    = true;    // 2페이즈 효과 활성화
+                    boss._dotTimer        = 0;
+                }
+                // 플레이어 무적 상태 즉시 해제 (전환 중 invincibleTimer=999 잔류 방지)
+                player.isInvincible    = false;
+                player.invincibleTimer = 0;
             }
         }
     },
@@ -1730,12 +1793,20 @@ const bossHalfSeq = {
                 this.phase = 'stand2';
                 this.timer = 0;
             } else {
-                // dialogue2 종료 → 줌아웃
-                this.phase = 'zoomout';
+                // dialogue2 종료 → 즉시 done (stand2에서 이미 줌아웃 완료)
+                this.phase = 'done';
                 this.timer = 0;
-                this._startScale = SCALE;
-                this._startCamX  = camera.x;
-                this._startCamY  = cameraY;
+                const boss2 = enemies.find(e => e.type === 'boss' && !e.isDead);
+                if (boss2) {
+                    boss2._halfInvincible = false;
+                    boss2.isInvincible    = false;
+                    boss2.invincibleTimer = 0;
+                    boss2._phase2Active   = true;    // 2페이즈 효과 활성화
+                    boss2._dotTimer       = 0;
+                }
+                // 플레이어 무적 상태 즉시 해제 (전환 중 invincibleTimer=999 잔류 방지)
+                player.isInvincible    = false;
+                player.invincibleTimer = 0;
             }
         } else {
             this._displayText = '';
@@ -1889,6 +1960,15 @@ function loadMap(mapIndex) {
         if (bgmPlayer.currentKey === 'BGM_BOSS1' || bgmPlayer.currentKey === '') {
             bgmPlayer.stop(false);
             bgmPlayer.restart('BGM1', true);
+        }
+    }
+    // 맵13 진입 시에도 페이즈2 상태 초기화 (죽고 돌아올 때 배경 리셋)
+    if (mapIndex === 13 && typeof bossPhase2 !== 'undefined') {
+        bossPhase2.reset();
+        if (typeof bossHalfSeq !== 'undefined') {
+            bossHalfSeq.phase = 'idle';
+            bossHalfSeq.timer = 0;
+            bossHalfSeq.stand2TransTimer = 0;
         }
     }
     platforms       = map.platforms;
@@ -2174,7 +2254,7 @@ function update() {
         return;
     }
 
-    // ── 보스 체력 절반 연출 업데이트 ──────────────────────────────
+    // ── 보스 체력 절반 연출 업데이트 (_bossHalfActive true면 위 블록에서 return 후 미도달) ──
     bossHalfSeq.update();
 
     // ── HP 0 감지 → 사망 연출 시작 ────────────────────────────────
@@ -2255,6 +2335,55 @@ function update() {
             }
         });
         player.state = player.grounded ? 'idle' : 'jump2';
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
+    // 보스 페이즈2 전환 연출 중 — 플레이어 완전 동결
+    const _bossHalfActive = bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done';
+    if (_bossHalfActive) {
+        bossHalfSeq.update();
+
+        // 플레이어 모든 동작 차단 + 외형 고정
+        player.dx             = 0;
+        player.isAttacking    = false;
+        player.attackTimer    = 0;
+        player.isDashing      = false;
+        player.dashTimer      = 0;
+        player.jumpCount      = Math.max(player.jumpCount, 1); // 추가 점프 봉쇄
+        player.isInvincible   = true;   // 피격 차단 (깜빡임은 아래서 처리)
+        player.invincibleTimer = 999;
+        // 스프라이트 고정: 착지면 idle, 공중이면 jump2 (fall)
+        player.state = player.grounded ? 'idle' : 'jump2';
+
+        // 중력 + 착지만 처리
+        player.dy += player.gravity;
+        if (player.dy > 20) player.dy = 20;
+        player.y += player.dy;
+        player.grounded = false;
+        platforms.forEach(plat => {
+            const type = plat.type || 'platform';
+            if (type === 'solid' || type === 'platform' || type === 'barrier' || type === 'log') {
+                if (player.x + player.width  > plat.x &&
+                    player.x                 < plat.x + plat.width &&
+                    player.y + player.height >= plat.y &&
+                    player.y + player.height <= plat.y + 20 &&
+                    player.dy >= 0) {
+                    if (type !== 'platform' || !player.isDescending) {
+                        player.y         = plat.y - player.height;
+                        player.dy        = 0;
+                        player.grounded  = true;
+                        player.jumpCount = 0;
+                        player.jumpTimer = 0;
+                    }
+                }
+            }
+        });
+        player.state = player.grounded ? 'idle' : 'jump2';
+
+        // 적 물리/AI 처리 (보스 점프 착지 등)
+        updateEnemies();
         draw();
         requestAnimationFrame(update);
         return;
@@ -2545,6 +2674,18 @@ function update() {
             player.isInvincible    = false;
             player.invincibleTimer = 0;
         }
+    }
+
+    // 6-7b: 2페이즈 저주 — 매초 최대체력 0.5% 도트 피해
+    if (bossPhase2.active && currentMapIndex === 13) {
+        player._p2DotTimer = (player._p2DotTimer || 0) + 1;
+        if (player._p2DotTimer >= 60) {   // 60프레임 = 1초
+            player._p2DotTimer = 0;
+            const dotDmg = Math.max(1, Math.round(player.maxHp * 0.005));
+            player.hp = Math.max(player.hp - dotDmg, 0);
+        }
+    } else {
+        player._p2DotTimer = 0;
     }
 
     // 6-8: 적 업데이트
@@ -2962,90 +3103,80 @@ function draw() {
 
     // 7-1c-boss: 맵13 보스방 배경
     if (currentMapIndex === 13) {
-        const viewWidth   = canvas.width / SCALE;
-        const viewHeight  = canvas.height / SCALE;
-        const viewLeft    = camera.x;
-        const viewTop     = cameraY;
-        const viewRight   = viewLeft + viewWidth;
         const worldBottom = world.height;
 
-        const _drawBossBg = (alpha) => {
-            const bgImg = sprites['BG_BOSS'];
+        // 줌인 중인 페이즈(jump/zoomin/dialogue)에서만 pre-zoom 카메라로 배경 고정
+        // stand2 이후(bgchange/dialogue2)는 이미 줌아웃 완료 → 현재 카메라 사용
+        const _zoomPhase = bossHalfSeq.phase === 'jump'    ||
+                           bossHalfSeq.phase === 'zoomin'  ||
+                           bossHalfSeq.phase === 'dialogue';
+        const _bgScale   = _zoomPhase ? bossHalfSeq.savedScale : SCALE;
+        const _bgCamX    = _zoomPhase ? bossHalfSeq.savedCamX  : camera.x;
+        const _bgCamY    = _zoomPhase ? bossHalfSeq.savedCamY  : cameraY;
+
+        // 배경을 순수 스크린 픽셀로 고정해서 그리는 헬퍼
+        // _bgScale/_bgCamX/_bgCamY 기준 월드뷰를 캔버스 전체(0,0,W,H)에 매핑
+        const _drawScreenBg = (imgKey, fillColor, alpha) => {
+            const bgImg = sprites[imgKey];
             ctx.save();
-            if (alpha < 1) ctx.globalAlpha = alpha;
-            ctx.fillStyle = '#0d1e35';
-            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            if (alpha !== undefined && alpha < 1) ctx.globalAlpha = alpha;
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             if (bgImg && bgImg.naturalWidth > 0) {
-                const imgW = bgImg.naturalWidth;
-                const imgH = bgImg.naturalHeight;
-                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
+                const sw = canvas.width  / _bgScale;
+                const sh = canvas.height / _bgScale;
+                const imgW  = bgImg.naturalWidth;
+                const imgH  = bgImg.naturalHeight;
+                const scale = Math.max(sw / imgW, sh / imgH);
                 const tileW = imgW * scale;
                 const tileH = imgH * scale;
-                const drawY = worldBottom - tileH;
-                const bgOffset = -tileW * 0.3;
-                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
-                for (let tx = startX; tx < viewRight; tx += tileW) {
-                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
+                // 월드 Y → 스크린 픽셀 Y
+                const worldDrawY  = worldBottom - tileH;
+                const screenDrawY = (worldDrawY - _bgCamY) * _bgScale;
+                const screenTileW = tileW * _bgScale;
+                const screenTileH = tileH * _bgScale;
+                const bgOffset    = -tileW * 0.3;
+                const firstWorldX = Math.floor((_bgCamX - bgOffset) / tileW) * tileW + bgOffset;
+                let screenX = (firstWorldX - _bgCamX) * _bgScale;
+                while (screenX < canvas.width) {
+                    ctx.drawImage(bgImg, screenX, screenDrawY, screenTileW, screenTileH);
+                    screenX += screenTileW;
                 }
             }
+            ctx.globalAlpha = 1;
             ctx.restore();
         };
 
         if (bossPhase2.blackScreen) {
-            // ── 로딩 중: 1페이즈 배경 그대로 유지 (검정 깜빡임 방지) ───
-            const bgImg = sprites['BG_PLAIN'];
-            ctx.fillStyle = MAP_DATA[13].bgColor;
-            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
-            if (bgImg && bgImg.naturalWidth > 0) {
-                const imgW = bgImg.naturalWidth;
-                const imgH = bgImg.naturalHeight;
-                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
-                const tileW = imgW * scale;
-                const tileH = imgH * scale;
-                const drawY = worldBottom - tileH;
-                const bgOffset = -tileW * 0.3;
-                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
-                for (let tx = startX; tx < viewRight; tx += tileW) {
-                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
-                }
-            }
+            // 로딩 중: 1페이즈 BG_PLAIN 고정
+            _drawScreenBg('BG_PLAIN', MAP_DATA[13].bgColor);
         } else if (bossPhase2.playing && bossPhase2._video) {
-            // ── 영상 재생 중 ────────────────────────────────────────────
+            // 영상 재생 중: 스크린 전체 고정
             const v = bossPhase2._video;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#000';
-            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
-            const fixedY = worldBottom - viewHeight - 60;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             if (v.readyState >= 3) {
-                ctx.drawImage(v, viewLeft, fixedY, viewWidth, viewHeight);
+                ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
             }
+            ctx.restore();
         } else if (bossPhase2.fadeIn) {
-            // ── 영상 종료 후 페이드인 ────────────────────────────────────
+            // 영상 종료 후 페이드인
             bossPhase2.updateFade();
-            // 검정 깔고 그 위에 BG_BOSS를 현재 alpha로
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#000';
-            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
-            _drawBossBg(1 - bossPhase2.fadeAlpha);
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.restore();
+            _drawScreenBg('BG_BOSS', '#0d1e35', 1 - bossPhase2.fadeAlpha);
         } else if (bossPhase2.active) {
-            // ── 2페이즈 완료 ─────────────────────────────────────────────
-            _drawBossBg(1);
+            // 2페이즈 배경 확정 (현재 카메라 기준 — 이미 zoomout 완료)
+            _drawScreenBg('BG_BOSS', '#0d1e35');
         } else {
-            // ── 1페이즈: BG_PLAIN ─────────────────────────────────────────
-            const bgImg = sprites['BG_PLAIN'];
-            ctx.fillStyle = MAP_DATA[13].bgColor;
-            ctx.fillRect(viewLeft, viewTop, viewWidth, viewHeight);
-            if (bgImg && bgImg.naturalWidth > 0) {
-                const imgW = bgImg.naturalWidth;
-                const imgH = bgImg.naturalHeight;
-                const scale = Math.max(viewWidth / imgW, viewHeight / imgH);
-                const tileW = imgW * scale;
-                const tileH = imgH * scale;
-                const drawY = worldBottom - tileH;
-                const bgOffset = -tileW * 0.3;
-                const startX = Math.floor((viewLeft - bgOffset) / tileW) * tileW + bgOffset;
-                for (let tx = startX; tx < viewRight; tx += tileW) {
-                    ctx.drawImage(bgImg, tx, drawY, tileW, tileH);
-                }
-            }
+            // 1페이즈: BG_PLAIN (현재 카메라 기준)
+            _drawScreenBg('BG_PLAIN', MAP_DATA[13].bgColor);
         }
     }
 
@@ -3444,7 +3575,11 @@ function drawStump(ctx, x, y, w, h) {
     let currentKey = 'PLAYER_STAND';
     const deathKey = getDeathPlayerKey();
     const introKey = getIntroPlayerKey();
-    if (deathKey) {
+    // 보스 페이즈2 전환 중 — 스프라이트 완전 고정 (idle/jump2만 허용)
+    const _bossHalfFrozen = bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done';
+    if (_bossHalfFrozen) {
+        currentKey = player.grounded ? 'PLAYER_STAND' : 'PLAYER_JUMP2';
+    } else if (deathKey) {
         // 사망 연출 중: 스프라이트 고정
         currentKey = deathKey;
         if (deathKey === 'PLAYER_FALL_DOWN') player.direction = 'left';
@@ -3528,7 +3663,10 @@ function drawStump(ctx, x, y, w, h) {
 
     // 페이즈별 렌더링 제어
     let blinkVisible;
-    if (player.ultPhase === 'vanish') {
+    if (_bossHalfFrozen) {
+        // 페이즈 전환 중 — 플레이어 항상 표시 (깜빡임 없음)
+        blinkVisible = true;
+    } else if (player.ultPhase === 'vanish') {
         blinkVisible = true;
     } else if (player.ultPhase === 'hidden' ||
                player.ultPhase === 'camMove' ||
@@ -4863,7 +5001,7 @@ const ENEMY_TYPES = {
     boss: {
         width:          100,
         height:         130,
-        hp:             1000,
+        hp:             2400,
         speed:          4.2,          // 플레이어(7)의 0.6배
         gravity:        0.9,
         detectRange:    1400,
@@ -4970,7 +5108,25 @@ function createEnemy(type, x, y, opts) {
 
         takeDamage(dmg) {
             if (this.isInvincible || this.isDead) return;
-            this.hp              = Math.max(this.hp - dmg, 0);
+            // 2페이즈 피해 감소 40%
+            const actualDmg = (this.type === 'boss' && this._phase2Active)
+                ? dmg * 0.6
+                : dmg;
+            // 보스 페이즈2 전환: 절반 이하로 깎일 때 절반까지만 깎고 트리거
+            if (this.type === 'boss' && !this._phase2Triggered) {
+                const halfHp = this.maxHp / 2;
+                if (this.hp > halfHp) {
+                    this.hp = Math.max(this.hp - actualDmg, halfHp);
+                    if (this.hp <= halfHp) {
+                        this._phase2Triggered = true;
+                        bossHalfSeq.trigger();
+                    }
+                } else {
+                    this.hp = Math.max(this.hp - actualDmg, 0);
+                }
+            } else {
+                this.hp = Math.max(this.hp - actualDmg, 0);
+            }
             this.hpVisible       = true;
             this.isInvincible    = true;
             this.invincibleTimer = 20;
@@ -5076,6 +5232,9 @@ function createEnemy(type, x, y, opts) {
             isLeaping:        false,
             // 체력 절반 페이즈 전환
             _phase2Triggered: false,
+            // 2페이즈 전투 효과
+            _phase2Active:    false,   // 피해 감소 + 도트 데미지 활성화
+            _dotTimer:        0,       // 도트 데미지 프레임 카운터
         });
     } else if (type === 'enemy3') {
         result = Object.assign(base, {
@@ -5143,6 +5302,20 @@ function updateEnemies() {
 
         if (e.cooldownTimer > 0) e.cooldownTimer--;
         if (e.type === 'boss' && e._atk2CooldownTimer > 0) e._atk2CooldownTimer--;
+
+        // 2페이즈 도트 데미지: 매초(60프레임) 최대체력의 0.5%
+        if (e.type === 'boss' && e._phase2Active && !e.isDead) {
+            e._dotTimer = (e._dotTimer || 0) + 1;
+            if (e._dotTimer >= 60) {
+                e._dotTimer = 0;
+                const dot = e.maxHp * 0.005;
+                e.hp = Math.max(e.hp - dot, 0);
+                if (e.hp <= 0) {
+                    e.isDead = true;
+                    bgmPlayer.stop(true);
+                }
+            }
+        }
 
         const px = player.x + player.width  / 2;
         const py = player.y + player.height / 2;
@@ -5255,7 +5428,7 @@ function updateEnemies() {
                     const inRange = Math.abs(distX) < e.attackRange &&
                                     Math.abs(distY) < e.height;
                     if (inRange) {
-                        player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = (distX > 0 ? -1 : 1) * 5;
@@ -5402,7 +5575,7 @@ function updateEnemies() {
                     // 크기 기준 판정
                     if (Math.abs(px2 - ex2) < e.width  &&
                         Math.abs(py2 - ey2) < e.height) {
-                        player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = e.attackDirX * 6;
@@ -5568,7 +5741,7 @@ function updateEnemies() {
                     const inX3     = Math.abs(px3 - strikeX) < e.atk3RangeX;
                     const inY3     = py3 > strikeY - e.atk3RangeY && py3 < strikeY + 40;
                     if (inX3 && inY3 && !player.isInvincible) {
-                        player.hp              = Math.max(player.hp - e.atk3Damage, 0);
+                        player.hp              = Math.max(player.hp - Math.round(e.atk3Damage * (bossPhase2.active ? 0.6 : 1)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = (px3 - strikeX > 0 ? 1 : -1) * 9;
@@ -5594,7 +5767,7 @@ function updateEnemies() {
                         const inX3   = Math.abs(px3 - landX) < e.atk3RangeX;
                         const inY3   = py3 > landY - e.atk3RangeY && py3 < landY + 20;
                         if (inX3 && inY3 && !player.isInvincible) {
-                            player.hp              = Math.max(player.hp - e.atk3Damage, 0);
+                            player.hp              = Math.max(player.hp - Math.round(e.atk3Damage * (bossPhase2.active ? 0.6 : 1)), 0);
                             player.isInvincible    = true;
                             player.invincibleTimer = 60;
                             player.dx = (px3 - landX > 0 ? 1 : -1) * 9;
@@ -5650,7 +5823,7 @@ function updateEnemies() {
                 const pOvX = player.x + player.width  > dashHitX && player.x < dashHitX + dashHitW;
                 const pOvY = player.y + player.height > dashHitY && player.y < dashHitY + dashHitH;
                 if (pOvX && pOvY && !player.isInvincible) {
-                    player.hp              = Math.max(player.hp - e.atk2Damage, 0);
+                    player.hp              = Math.max(player.hp - Math.round(e.atk2Damage * (bossPhase2.active ? 0.6 : 1)), 0);
                     player.isInvincible    = true;
                     player.invincibleTimer = 60;
                     player.dx = e._atk2DashDir * 10;
@@ -5710,7 +5883,7 @@ function updateEnemies() {
                         const inX = pCenterX >= bossFrontX && pCenterX <= bossFrontX + atk1RangeX;
                         const inY = pCenterY >= hitTop     && pCenterY <= hitBottom;
                         if (inX && inY && !player.isInvincible) {
-                            player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                            player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
                             player.isInvincible    = true;
                             player.invincibleTimer = 60;
                             const bdxHit           = pCenterX - (e.x + e.width / 2);
@@ -5972,7 +6145,7 @@ function updateEnemies() {
                 if (!player.isInvincible) {
                     if (ar.x + ar.w > player.x && ar.x < player.x + player.width &&
                         ar.y + ar.h > player.y && ar.y < player.y + player.height) {
-                        player.hp              = Math.max(player.hp - e.attackDamage, 0);
+                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = ar.dx * 0.5;
@@ -6088,7 +6261,10 @@ function drawEnemies() {
         if (deadAlpha <= 0) return;
 
         const blinkVisible = !e.isInvincible || Math.floor(Date.now() / 80) % 2 === 0;
-        if (!blinkVisible) return;
+        // 페이즈 전환 연출 중에는 보스 깜빡임 없이 항상 표시
+        const isPhaseTransition = e.type === 'boss' &&
+            (bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done');
+        if (!blinkVisible && !isPhaseTransition) return;
 
         // ── enemy2 전용 렌더링 ────────────────────────────────────
         if (e.type === 'enemy2') {
@@ -6324,7 +6500,17 @@ function drawEnemies() {
                     bossImgKey = e.state === 'walk' ? e.imgMove : e.imgStand;
                 }
                 drawH = e.state === 'walk' ? BH * 1.105 : BH * 1.3;
-                drawW = drawH;
+                // stand2 전환 스프라이트는 원본 비율대로 drawW 산출 (height 고정)
+                const _stand2Ratios = {
+                    'BOSS_STAND2_1': 307 / 462,
+                    'BOSS_STAND2_2': 292 / 449,
+                    'BOSS_STAND2_3': 253 / 477,
+                };
+                if (_stand2Ratios[bossImgKey] !== undefined) {
+                    drawW = drawH * _stand2Ratios[bossImgKey];
+                } else {
+                    drawW = drawH;
+                }
             }
 
             // 발 위치 고정 기준으로 drawX, drawY 결정
@@ -6989,7 +7175,9 @@ function doUltHit(isCross) {
                     bossHalfSeq.trigger();
                 }
             } else {
-                e.hp = Math.max(e.hp - damage, 0);
+                // 2페이즈 피해 감소 40%
+                const ultDmg = (e.type === 'boss' && e._phase2Active) ? damage * 0.6 : damage;
+                e.hp = Math.max(e.hp - ultDmg, 0);
             }
             e.hpVisible       = true;
             e.isAggro         = true;
@@ -8738,7 +8926,15 @@ MAP_DATA.push({
             dialogue.typingTimer = 0;
             dialogue.isFinished  = false;
         } else {
-            // 재진입: BGM 페이드아웃 후 보스BGM 재생
+            // 재진입: 배경·페이즈2 상태 완전 리셋 (항상 기본 배경으로 시작)
+            bossPhase2.reset();
+            bossHalfSeq.phase = 'idle';
+            bossHalfSeq.timer = 0;
+            bossHalfSeq.stand2TransTimer = 0;
+            // 보스 imgStand도 1페이즈 스프라이트로 복원
+            const bossToReset = enemies.find(e => e.type === 'boss');
+            if (bossToReset) bossToReset.imgStand = 'BOSS_STAND';
+
             bgmPlayer.fadeOutFast(() => {});
             if (!bossHpBar.visible) bossHpBar.startIntro();
             bgmPlayer.play('BGM_BOSS1', true);
