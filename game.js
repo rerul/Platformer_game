@@ -233,6 +233,11 @@ const ASSETS = {
     BOSS_ATTACK3_3:  './assets/images/boss_attack3_3.png',   // 공격3 post(후딜레이)
     BOSS_JUMP1:      './assets/images/boss_jump1.png',
     BOSS_JUMP2:      './assets/images/boss_jump2.png',
+    BOSS_P2_ATTACK1: './assets/images/boss_p2_attack1.png',
+    BOSS_P2_JUMP1:        './assets/images/boss_p2_jump1.png',
+    BOSS_P2_JUMP2:        './assets/images/boss_p2_jump2.png',
+    BOSS_P2_ATTACK1_1:    './assets/images/boss_p2_attack1_1.png',
+    BOSS_P2_ATTACK1_2:    './assets/images/boss_p2_attack1_2.png',
     ENEMY1_ATTACK3: './assets/images/enemy1_attack3.png',
     ENEMY2_STAND:      './assets/images/enemy2_stand.png',
     ENEMY2_MOVE:      './assets/images/enemy2_move.png',
@@ -1197,6 +1202,11 @@ window.addEventListener('keydown', (e) => {
             startDash();
         }
     }
+    // 테스트용 단축키: X = 보스 체력 30%로 설정
+    if (key === 'x') {
+        const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
+        if (boss) boss.hp = Math.ceil(boss.maxHp * 0.30);
+    }
 });
 window.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
@@ -1613,6 +1623,12 @@ const bossHalfSeq = {
         boss.isLeaping        = false;
         boss.dx               = 0;
         boss._halfInvincible  = true;   // 절반 연출 중 무적
+        // 2페이즈 공격 상태 초기화
+        boss._p2a1Phase       = 'idle';
+        boss._p2a1Timer       = 0;
+        boss._p2a1Cooldown    = 90;    // 2페이즈 진입 직후 약간의 유예 쿨타임
+        boss._p2a1Alpha       = 1;
+        boss._p2a1Visible     = true;
 
         // 맵 중앙으로 점프
         const centerX = world.width / 2;
@@ -4349,6 +4365,9 @@ function checkMapTransitions() {
             // requireClear가 있는 출입구: 맵 클리어 전엔 이동 불가
             if (tr.requireClear && !isMapCleared(currentMapIndex)) break;
 
+            // requireBossDefeated: 보스가 살아있는 동안 통과 불가
+            if (tr.requireBossDefeated && enemies.some(e => e.type === 'boss' && !e.isDead)) break;
+
             // requireTutorialKill: 튜토리얼 enemy1을 처치해야만 통과 가능
             if (tr.requireTutorialKill) {
                 // 영구 클리어 플래그 우선 확인 (맵 재진입 후 enemy 없어도 안전)
@@ -4383,6 +4402,9 @@ function drawMapTransitionDoors() {
         if (hasTutKillReq) {
             // 영구 클리어 플래그 우선 (재진입 후에도 열림 유지)
             cleared = map2Events.killMonologueDone || !enemies.find(e => e.isTutorialEnemy);
+        } else if (tr.requireBossDefeated) {
+            // 보스 생존 중엔 잠금
+            cleared = !enemies.some(e => e.type === 'boss' && !e.isDead);
         } else if (hasClearReq) {
             cleared = isMapCleared(currentMapIndex);
         } else {
@@ -5035,6 +5057,10 @@ const ENEMY_TYPES = {
         imgAtk3_3:   'BOSS_ATTACK3_3',
         imgJump1:    'BOSS_JUMP1',
         imgJump2:    'BOSS_JUMP2',
+        imgP2Jump1:  'BOSS_P2_JUMP1',
+        imgP2Jump2:  'BOSS_P2_JUMP2',
+        imgP2Atk1_1: 'BOSS_P2_ATTACK1_1',
+        imgP2Atk1_2: 'BOSS_P2_ATTACK1_2',
     },
     enemy3: {
         // ★ 이 두 값만 바꾸면 스프라이트·화살 스케일 전체 연동
@@ -5172,6 +5198,10 @@ function createEnemy(type, x, y, opts) {
             imgAtk3_3:     def.imgAtk3_3,
             imgJump1:      def.imgJump1,
             imgJump2:      def.imgJump2,
+            imgP2Jump1:    def.imgP2Jump1,
+            imgP2Jump2:    def.imgP2Jump2,
+            imgP2Atk1_1:   def.imgP2Atk1_1,
+            imgP2Atk1_2:   def.imgP2Atk1_2,
             // 공격2 파라미터
             atk2Damage:     def.atk2Damage,
             atk2Windup:     def.atk2Windup,
@@ -5657,6 +5687,289 @@ function updateEnemies() {
             // 보스는 항상 어그로
             e.isAggro = true;
 
+            // 플레이어 중심 기준 거리 (1·2페이즈 공통으로 미리 계산)
+            const bpx = player.x + player.width  / 2;
+            const bpy = player.y + player.height / 2;
+            const bex = e.x + e.width  / 2;
+            const bey = e.y + e.height / 2;
+            const bdx = bpx - bex;   // 양수=플레이어가 오른쪽
+            const bdy = bpy - bey;   // 양수=플레이어가 아래
+            const absDX = Math.abs(bdx);
+            const absDY = Math.abs(bdy);
+
+            // ══════════════════════════════════════════════════════
+            // ── 2페이즈 AI (1페이즈 패턴·점프 완전 우회) ────────────
+            // ══════════════════════════════════════════════════════
+            if (e._phase2Active) {
+                // ══════════════════════════════════════════════════
+                // ── p2_attack1: 소멸 → 맵 끝 등장 → 윈드업(공격범위) → 고속 돌진 → 후딜 → 소멸
+                // ══════════════════════════════════════════════════
+                // 런타임 상태 초기화 (첫 프레임)
+                if (e._p2a1Phase === undefined) {
+                    e._p2a1Phase      = 'idle';  // idle|vanish|appear|windup|dash|post|endvanish
+                    e._p2a1Timer      = 0;
+                    e._p2a1DashDir    = 1;
+                    e._p2a1HitDone    = false;
+                    e._p2a1Visible    = true;
+                    e._p2a1Cooldown   = 0;
+                    e._p2a1SpawnY     = world.height - 60 - e.height;  // 기본 바닥
+                }
+                if (e._p2a1Cooldown > 0) e._p2a1Cooldown--;
+
+                // ── 각 단계 처리 ──────────────────────────────────
+                if (e._p2a1Phase === 'idle') {
+                    e._p2a1Visible = true;
+                    e.dx = 0;
+                    e.state = 'idle';
+                    e.direction = bdx >= 0 ? 'right' : 'left';
+                    if (e._p2a1Cooldown <= 0) {
+                        e._p2a1Phase = 'vanish';
+                        e._p2a1Timer = 23;   // 18 × 1.3 ≈ 23
+                    }
+
+                } else if (e._p2a1Phase === 'vanish') {
+                    e.dx = 0;
+                    e.state = 'idle';
+                    e._p2a1Timer--;
+                    if (e._p2a1Timer <= 0) {
+                        // ── 플레이어 위치 감지 ──────────────────────────
+                        const floorY     = world.height - 60;           // 1020 (바닥 상단)
+                        const platY      = 820;                         // 보스맵 플랫폼 상단
+                        const playerFoot = player.y + player.height;
+                        const onPlatform = player.grounded && playerFoot < floorY - 10;
+                        // 플레이어 중심이 플랫폼 상단보다 위쪽일 때만 플랫폼 레인 조준
+                        // (점프 중이라도 플랫폼 y보다 낮으면 바닥 레인)
+                        const abovePlat  = player.y + player.height / 2 < platY;
+
+                        e._p2a1SpawnY = (onPlatform || abovePlat)
+                            ? platY - e.height       // 플랫폼 위 스윕 (y≈690)
+                            : floorY - e.height;     // 바닥 스윕 (y≈890)
+
+                        // 맵 양끝 중 무작위 선택
+                        const spawnLeft = Math.random() < 0.5;
+                        if (spawnLeft) {
+                            e.x            = 30;
+                            e._p2a1DashDir = 1;
+                            e.direction    = 'right';
+                        } else {
+                            e.x            = world.width - e.width - 30;
+                            e._p2a1DashDir = -1;
+                            e.direction    = 'left';
+                        }
+                        // 대각선 위 시작: 돌진 반대 방향으로 살짝 + 스윕 높이보다 위쪽에서 등장
+                        const dropHeight = 80;   // 스윕Y보다 위쪽 시작 거리
+                        e.y  = e._p2a1SpawnY - dropHeight;
+                        e.dy = 0;
+                        e.dx = 0;
+                        // 등장 하강 속도 계산: dropHeight를 appearTimer 프레임 안에 도달
+                        e._p2a1AppearDy  =  dropHeight / 16;   // 매 프레임 하강량
+                        e._p2a1AppearDx  =  e._p2a1DashDir * 3; // 돌진 방향으로 살짝
+                        e._p2a1Phase = 'appear';
+                        e._p2a1Timer = 16;
+                    }
+
+                } else if (e._p2a1Phase === 'appear') {
+                    // 대각선 위에서 빠르게 스윕 높이로 내려오며 등장
+                    e.dx    = e._p2a1AppearDx;
+                    e.dy    = e._p2a1AppearDy;
+                    e.state = 'jump2';   // 하강 자세
+                    e._p2a1Timer--;
+                    // y가 스윕 높이에 도달하거나 타이머 종료 시 windup
+                    if (e.y + e.dy >= e._p2a1SpawnY || e._p2a1Timer <= 0) {
+                        e.y            = e._p2a1SpawnY;   // 정확히 스윕 높이에 snap
+                        e.dx           = 0;
+                        e.dy           = 0;
+                        e._p2a1Phase    = 'windup';
+                        e._p2a1Timer    = e._p2a1IsEnrage ? 19 : 38;   // 격노 연속공격은 절반
+                        e._p2a1IsEnrage = false;   // 소모 후 리셋
+                        e._p2a1HitDone  = false;
+                        playSound('BOSS_ATTACK1_1');
+                    }
+
+                } else if (e._p2a1Phase === 'windup') {
+                    e.dx = 0;
+                    e.state = 'attack';   // atk2_1 모션
+                    e._p2a1Timer--;
+                    if (e._p2a1Timer <= 0) {
+                        e._p2a1Phase     = 'dash';
+                        e._p2a1Timer     = 120;   // 최대 프레임 (벽 도달이 우선)
+                        e._p2a1DashSpeed = 110;
+                        e.dx = e._p2a1DashDir * e._p2a1DashSpeed;
+                        playSoundImmediate('BOSS_ATTACK2_2');
+                    }
+
+                } else if (e._p2a1Phase === 'dash') {
+                    e.state = 'attack';
+                    e.dx = e._p2a1DashDir * e._p2a1DashSpeed;
+                    e.y  = e._p2a1SpawnY;
+                    e.dy = 0;
+                    e._p2a1Timer--;
+
+                    // 잔상 이펙트
+                    if (e._p2a1Timer % 2 === 0) {
+                        const _savedDir = e._atk2DashDir;
+                        e._atk2DashDir = e._p2a1DashDir;
+                        spawnBossDashSlash(e, true);
+                        e._atk2DashDir = _savedDir;
+                    }
+
+                    // 돌진 종료 0.3초(18f) 전부터 범위 표시 시작
+                    const reachedWall = e._p2a1DashDir > 0
+                        ? e.x + e.width >= world.width - 30
+                        : e.x <= 30;
+                    if (!e._p2a1PreChaseActive && (reachedWall || e._p2a1Timer <= 18)) {
+                        e._p2a1PreChaseActive = true;
+                        e._p2a1PreChaseTimer  = 18;   // 범위 표시 남은 시간
+                    }
+                    if (e._p2a1PreChaseActive && e._p2a1PreChaseTimer > 0) {
+                        e._p2a1PreChaseTimer--;
+                    }
+
+                    // 피해 판정
+                    if (!player.isInvincible) {
+                        const pOvX = player.x + player.width  > e.x && player.x < e.x + e.width;
+                        const pOvY = player.y + player.height > e.y && player.y < e.y + e.height;
+                        if (pOvX && pOvY) {
+                            player.hp              = Math.max(player.hp - Math.round(e.atk2Damage * 0.6), 0);
+                            player.isInvincible    = true;
+                            player.invincibleTimer = 60;
+                            player.dx = e._p2a1DashDir * 12;
+                            player.dy = -7;
+                            e._p2a1HitDone = true;
+                        }
+                    }
+
+                    // 벽 도달 또는 타이머 종료 → post
+                    if (reachedWall || e._p2a1Timer <= 0) {
+                        e.dx = 0;
+                        e._p2a1Phase         = 'post';
+                        e._p2a1Timer         = 52;
+                        e._p2a1PreChaseActive = false;
+                        e.state = 'attack';
+                    }
+
+                } else if (e._p2a1Phase === 'post') {
+                    // ── post: chase(후속타 즉시 시작) → wait ──
+                    if (e._p2a1PostSub === undefined) {
+                        e._p2a1PostSub      = 'chase';
+                        e._p2a1PostSubTimer = 0;   // 즉시 첫 slash
+                        e._p2a1ChaseCount   = 0;
+                        e._p2a1PostFlash    = false;
+                    }
+                    e.dx    = 0;
+                    e.dy    = 0;
+                    e.state = 'jump1';
+
+                    if (e._p2a1PostSub === 'preshow') {
+                        // 범위만 표시, 후속타 아직 없음
+                        e._p2a1PostSubTimer--;
+                        if (e._p2a1PostSubTimer <= 0) {
+                            e._p2a1PostSub      = 'chase';
+                            e._p2a1PostSubTimer = 0;   // 즉시 첫 번째 slash
+                        }
+                    } else if (e._p2a1PostSub === 'chase') {
+                        e._p2a1PostSubTimer--;
+                        // 5프레임 간격으로 slash 7개 순차 발사
+                        if (e._p2a1PostSubTimer <= 0 && e._p2a1ChaseCount < 7) {
+                            spawnP2ChaseSlash(e, e._p2a1ChaseCount);
+                            e._p2a1ChaseCount++;
+                            e._p2a1PostSubTimer = 5;
+                        }
+                        // 7개 모두 발사 후 대기
+                        if (e._p2a1ChaseCount >= 7 && e._p2a1PostSubTimer <= 0) {
+                            e._p2a1PostSub      = 'wait';
+                            e._p2a1PostSubTimer = 28;
+                        }
+                    } else if (e._p2a1PostSub === 'wait') {
+                        e._p2a1PostSubTimer--;
+
+                        // 체력 30% 미만: wait 종료 0.3초(18f) 전에 재공격 시작
+                        const hpRatio = e.hp / e.maxHp;
+                        if (hpRatio < 0.30 && !e._p2a1EnrageUsed && e._p2a1PostSubTimer === 10) {
+                            e._p2a1EnrageUsed = true;
+
+                            e._p2a1DashDir = -e._p2a1DashDir;
+                            e.direction = e._p2a1DashDir > 0 ? 'right' : 'left';
+
+                            const floorY    = world.height - 60;
+                            const platY     = 820;
+                            const floorSpawnY = floorY - e.height;   // ≈ 890
+                            const platSpawnY  = platY  - e.height;   // ≈ 690
+                            const midSpawnY   = (floorSpawnY + platSpawnY) / 2;  // ≈ 790
+
+                            // 현재 spawnY가 중간값보다 위면 플랫폼, 아래면 바닥
+                            const wasOnPlat = e._p2a1SpawnY < midSpawnY;
+                            e._p2a1SpawnY = wasOnPlat ? floorSpawnY : platSpawnY;
+
+                            const dropHeight = 80;
+                            e.x = e._p2a1DashDir > 0 ? 30 : world.width - e.width - 30;
+                            e.y  = e._p2a1SpawnY - dropHeight;
+                            e.dy = 0;
+                            e.dx = 0;
+                            e._p2a1AppearDy  = dropHeight / 16;
+                            e._p2a1AppearDx  = e._p2a1DashDir * 3;
+                            e._p2a1Alpha     = 0;
+                            e._p2a1Phase     = 'appear';
+                            e._p2a1Timer     = 16;
+                            e._p2a1HitDone   = false;
+                            e._p2a1PostSub   = undefined;
+                            e._p2a1IsEnrage  = true;   // windup 절반 적용 플래그
+                        } else if (e._p2a1PostSubTimer <= 0) {
+                            e._p2a1PostSub    = undefined;
+                            e._p2a1EnrageUsed = false;
+                            e._p2a1Phase      = 'endvanish';
+                            e._p2a1Timer      = 10;
+                            e._p2a1EvDx       = e._p2a1DashDir * 6;
+                            e._p2a1EvDy       = -9;
+                        }
+                    }
+
+                } else if (e._p2a1Phase === 'endvanish') {
+                    // 대각선 위로 이동하며 빠르게 투명해짐
+                    e.dx    = e._p2a1EvDx;
+                    e.dy    = e._p2a1EvDy;
+                    e.state = 'jump1';
+                    e._p2a1Timer--;
+                    if (e._p2a1Timer <= 0) {
+                        const groundY = world.height - 60 - e.height;
+                        e.x  = world.width / 2 - e.width / 2;
+                        e.y  = groundY;
+                        e.dy = 0;
+                        e.dx = 0;
+                        e.direction     = bdx >= 0 ? 'right' : 'left';
+                        e._p2a1Phase    = 'idle';
+                        e._p2a1Cooldown = e.attackCooldown;
+                        e._p2a1Visible  = true;
+                    }
+                }
+
+                // 투명도 계산
+                if (e._p2a1Phase === 'vanish') {
+                    e._p2a1Alpha = e._p2a1Timer / 23;
+                } else if (e._p2a1Phase === 'appear') {
+                    // 타이머 기반 단순 페이드인 (0→1)
+                    e._p2a1Alpha = Math.min(1, 1 - (e._p2a1Timer / 16));
+                } else if (e._p2a1Phase === 'endvanish') {
+                    e._p2a1Alpha = e._p2a1Timer / 10;   // 10f 만에 0으로
+                } else {
+                    e._p2a1Alpha = 1;
+                }
+
+                // 위치 업데이트 (endvanish·appear는 y도 이동, 나머지는 y 고정)
+                e.x += e.dx;
+                if (e._p2a1Phase === 'endvanish' || e._p2a1Phase === 'appear') {
+                    e.y += e.dy;
+                } else {
+                    e.dy = 0;
+                }
+                e.grounded = (e._p2a1Phase !== 'endvanish' && e._p2a1Phase !== 'appear');
+
+                continue;   // 1페이즈 AI 전체 건너뜀
+            }
+            // ══════════════════════════════════════════════════════
+            // ── 1페이즈 AI (이하 기존 코드 유지) ─────────────────────
+            // ══════════════════════════════════════════════════════
+
             if (e.leapTimer > 0) e.leapTimer--;
             if (e._atk3CooldownTimer > 0) e._atk3CooldownTimer--;
 
@@ -5667,16 +5980,6 @@ function updateEnemies() {
             } else {
                 e._atk3IdleTimer++;
             }
-
-            // 플레이어 중심 기준 거리
-            const bpx = player.x + player.width  / 2;
-            const bpy = player.y + player.height / 2;
-            const bex = e.x + e.width  / 2;
-            const bey = e.y + e.height / 2;
-            const bdx = bpx - bex;   // 양수=플레이어가 오른쪽
-            const bdy = bpy - bey;   // 양수=플레이어가 아래
-            const absDX = Math.abs(bdx);
-            const absDY = Math.abs(bdy);
 
             // 플레이어가 플랫폼(공중) 위에 있는지 판정
             const playerOnPlatform = player.grounded &&
@@ -6406,7 +6709,35 @@ function drawEnemies() {
             let drawW, drawH;
             const BH = e.height;   // 히트박스 높이 = 130
 
-            if (e._atk3Phase === 'windup') {
+            // ── 2페이즈 p2_attack1 전용 스프라이트 ─────────────────
+            if (e._phase2Active && e._p2a1Phase !== undefined) {
+                if (e._p2a1Phase === 'appear') {
+                    // 대각선 하강: p2 전용 jump2
+                    bossImgKey = e.imgP2Jump2;
+                    drawH = BH / 0.82;
+                    drawW = drawH * (500 / 500);
+                } else if (e._p2a1Phase === 'windup') {
+                    // 윈드업: p2 전용 attack1_1
+                    bossImgKey = e.imgP2Atk1_1;
+                    drawH = BH * (9 / 8) * 0.85;
+                    drawW = drawH * (584 / 341);
+                } else if (e._p2a1Phase === 'dash') {
+                    // 돌진 중: p2 전용 attack1_2
+                    bossImgKey = e.imgP2Atk1_2;
+                    drawH = (BH / 0.9375) * 0.85;
+                    drawW = drawH * (674 / 305);
+                } else if (e._p2a1Phase === 'post' || e._p2a1Phase === 'endvanish') {
+                    // 후딜 / 소멸: p2 전용 jump1
+                    bossImgKey = e.imgP2Jump1;
+                    drawH = BH / 0.88;
+                    drawW = drawH * (457 / 451);
+                } else {
+                    // idle / vanish: 기본 stand
+                    bossImgKey = e.imgStand;
+                    drawH = BH * 1.3;
+                    drawW = drawH;
+                }
+            } else if (e._atk3Phase === 'windup') {
                 // 공중 정지 예고: boss_attack3_1 (1.2× 스케일)
                 bossImgKey = e.imgAtk3_1;
                 drawH = (BH / 0.80) * 1.44;           // 기존 × 1.2 = 1.2배 확대
@@ -6510,7 +6841,9 @@ function drawEnemies() {
             const hasImg = bImg && bImg.complete && bImg.naturalWidth !== 0;
 
             ctx.save();
-            ctx.globalAlpha = deadAlpha;
+            // 2페이즈 소멸/등장 투명도 반영
+            const _p2Alpha = (e._phase2Active && e._p2a1Alpha !== undefined) ? e._p2a1Alpha : 1;
+            ctx.globalAlpha = deadAlpha * _p2Alpha;
 
             if (hasImg) {
                 if (e.direction === 'right') {
@@ -6540,6 +6873,53 @@ function drawEnemies() {
             }
 
             ctx.restore();
+
+            // ── p2_attack1 윈드업 예고 표시기 (맵 전체 돌진 범위) ────
+            if (e._phase2Active && e._p2a1Phase === 'windup') {
+                const windupTotal = 38;
+                const isFlash = false;
+                const ratio   = e._p2a1Timer / windupTotal;
+                const pulse   = 0.5 + 0.5 * Math.sin(Date.now() / 80);
+                const alpha   = (1 - ratio) * (0.35 + 0.2 * pulse);
+
+                // 돌진 방향으로 보스 끝부터 맵 반대편 벽까지
+                const dashFrom = e._p2a1DashDir > 0 ? e.x + e.width : 0;
+                const dashTo   = e._p2a1DashDir > 0 ? world.width   : e.x;
+                const laneW    = Math.abs(dashTo - dashFrom);
+                const laneX    = Math.min(dashFrom, dashTo);
+                const laneY    = e.y;
+                const laneH    = e.height;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle   = '#ff2020';
+                ctx.fillRect(laneX, laneY, laneW, laneH);
+                ctx.globalAlpha = Math.min(1, alpha * 2.2);
+                ctx.strokeStyle = '#ff6060';
+                ctx.lineWidth   = 2.5;
+                ctx.strokeRect(laneX, laneY, laneW, laneH);
+                ctx.restore();
+            }
+
+            // ── p2_attack1 chase 단계: 맵 전체 레인 한 번에 표시 (preshow 동안만) ──
+            if (e._phase2Active && e._p2a1Phase === 'post' && e._p2a1PostSub === 'preshow') {
+                const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 60);
+                const ratio = e._p2a1PostSubTimer / 20;   // 1→0
+                const alpha = (0.28 + 0.15 * pulse) * (0.4 + 0.6 * (1 - ratio));  // 점점 밝아짐
+                const lx    = 0;
+                const ly    = e._p2a1SpawnY - e.height * 0.1;
+                const lw    = world.width;
+                const lh    = e.height * 1.2;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle   = '#ff2020';
+                ctx.fillRect(lx, ly, lw, lh);
+                ctx.globalAlpha = Math.min(1, alpha * 2.5);
+                ctx.strokeStyle = '#ff6060';
+                ctx.lineWidth   = 2.5;
+                ctx.strokeRect(lx, ly, lw, lh);
+                ctx.restore();
+            }
 
             // ── 공격1 예고 표시기 ──────────────────────────────────
             if (e.state === 'attack' && e._atk1DelayTotal !== undefined && !e._atk1HitDone) {
@@ -6996,37 +7376,87 @@ function spawnCross(cx, cy) {
 }
 
 // ── 보스 attack2 돌진 속도선 이펙트 ──────────────────────────────
-function spawnBossDashSlash(e) {
-    const dir = e._atk2DashDir;   // +1 오른쪽, -1 왼쪽
+function spawnBossDashSlash(e, isP2 = false) {
+    const dir = e._atk2DashDir;
     const bossL = e.x;
     const bossR = e.x + e.width;
     const bossT = e.y;
     const bossB = e.y + e.height;
 
-    // 한 번 호출에 일자선 2~3개 스폰 (세로 위치 분산)
     const lineCount = 2 + Math.floor(Math.random() * 2);
     for (let i = 0; i < lineCount; i++) {
-        // Y: 보스 몸통 내 랜덤 위치
         const cy = bossT + (bossB - bossT) * (0.15 + Math.random() * 0.70);
-        // X: 보스 뒤쪽에서 시작 (이미 지나쳐온 궤적 느낌)
         const cx = dir > 0 ? bossL + Math.random() * e.width * 0.5
                            : bossR - Math.random() * e.width * 0.5;
-
-        const len    = 60 + Math.random() * 90;   // 선 길이
-        const speed  = Math.abs(e.dx);             // 현재 속도 반영
+        const len   = 60 + Math.random() * 90;
+        const speed = Math.abs(e.dx);
 
         slashEffects.push({
-            type:    'bossDash',
-            cx, cy,
-            dir,     // 방향
-            len,
-            speed,
-            life:    1.0,
-            decay:   0.16 + Math.random() * 0.08,  // 빠르게 사라짐
-            thick:   1.5 + Math.random() * 2.5,    // 선 두께
+            type:  'bossDash',
+            cx, cy, dir, len, speed,
+            life:  1.0,
+            decay: 0.16 + Math.random() * 0.08,
+            thick: 1.5  + Math.random() * 2.5,
+            isP2,   // p2 돌진이면 슬래시와 동일 색상
         });
     }
 }
+
+// ── 보스 2페이즈 p2_attack1 추격 slash (맵 전체 이동) ────────────────
+// index: 0=중앙, 1=위, 2=아래 (세로 오프셋으로 이미지의 3줄 일렬 표현)
+function spawnP2ChaseSlash(e, groupIndex) {
+    const dir    = e._p2a1DashDir;
+    const spawnY = e._p2a1SpawnY;
+    const bossH  = e.height;
+    const bossW  = e.width;    // 히트박스 폭 기준
+    const mapW   = world.width;
+
+    // 그룹 X 위치: 7회로 맵 전체 균등 배치 (맵을 8등분해 1~7 지점)
+    const step   = mapW / 8;
+    const secIdx = dir > 0 ? groupIndex : (6 - groupIndex);
+    const cx     = step * (secIdx + 1);
+
+    // 각도: 기본값에 랜덤 변동 (±12°)
+    const baseDeg = dir > 0 ? -10 : 190;
+    const randDeg = (Math.random() - 0.5) * 24;
+
+    // 세로 3줄: 위/중/아래
+    const yOffsets = [bossH * 0.15, bossH * 0.50, bossH * 0.85];
+    const configs  = [
+        { len: 520, width: 10, speed: 0.55 },
+        { len: 420, width: 18, speed: 0.50 },
+        { len: 320, width: 12, speed: 0.58 },
+    ];
+
+    yOffsets.forEach((yOff, row) => {
+        const cfg     = configs[row];
+        const xOff    = dir * 20 * (row - 1);
+        const rowRand = (Math.random() - 0.5) * 14;
+        const slashCx = cx + xOff;
+
+        // 히트박스: 각도 무관, slash 길이 폭 × bossH*1.2 높이 고정 직사각형
+        slashEffects.push({
+            type:         'p2chase',
+            cx:           slashCx,
+            cy:           spawnY + yOff,
+            angle:        (baseDeg + randDeg + row * 4 + rowRand) * Math.PI / 180,
+            length:       cfg.len,
+            life:         1.0,
+            decay:        0.028,
+            width:        cfg.width,
+            drawProgress: 0,
+            drawSpeed:    cfg.speed,
+            dir,
+            hitChecked:   false,
+            hitLaneX:     slashCx - cfg.len / 2,   // slash 길이 기준 폭
+            hitLaneY:     spawnY - bossH * 0.1,    // 1.2배 높이를 위아래로 확장
+            hitLaneW:     cfg.len,
+            hitLaneH:     bossH * 1.2,
+            isFirstRow:   row === 0,
+        });
+    });
+}
+
 
 function updateSlashEffects() {
     for (let i = slashEffects.length - 1; i >= 0; i--) {
@@ -7034,6 +7464,30 @@ function updateSlashEffects() {
         if (s.type === 'bossDash') {
             // 속도선은 drawProgress 없이 바로 페이드
             s.life -= s.decay;
+        } else if (s.type === 'p2chase') {
+            // 고정 위치에 drawProgress로 그려지듯 등장 후 페이드아웃
+            if (s.drawProgress < 1) {
+                s.drawProgress = Math.min(s.drawProgress + s.drawSpeed, 1);
+                // 히트 판정: 돌진 레인과 동일한 직사각형 범위
+                if (!s.hitChecked && s.drawProgress > 0.3 && typeof player !== 'undefined' && !player.isInvincible) {
+                    const lx = s.hitLaneX, ly = s.hitLaneY;
+                    const lw = s.hitLaneW, lh = s.hitLaneH;
+                    const pOvX = player.x + player.width  > lx && player.x < lx + lw;
+                    const pOvY = player.y + player.height > ly && player.y < ly + lh;
+                    if (pOvX && pOvY) {
+                        const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
+                        const dmg  = boss ? Math.round((boss.atk2Damage || 20) * 0.40) : 10;
+                        player.hp              = Math.max(player.hp - dmg, 0);
+                        player.isInvincible    = true;
+                        player.invincibleTimer = 45;
+                        player.dx = s.dir * 7;
+                        player.dy = -5;
+                        s.hitChecked = true;
+                    }
+                }
+            } else {
+                s.life -= s.decay;
+            }
         } else if (s.drawProgress < 1) {
             s.drawProgress = Math.min(s.drawProgress + s.drawSpeed, 1);
         } else {
@@ -7110,6 +7564,64 @@ function drawSlashEffects() {
         } else if (s.type === 'cross') {
             ctx.save(); ctx.rotate( 30 * Math.PI / 180); drawSingleSlash(s); ctx.restore();
             ctx.save(); ctx.rotate(-30 * Math.PI / 180); drawSingleSlash(s); ctx.restore();
+        } else if (s.type === 'p2chase') {
+            // 고정 위치에서 drawProgress로 긁히듯 나타나는 slash
+            // translate(s.cx, s.cy) 이미 적용됨
+            ctx.save();
+            ctx.rotate(s.angle);
+            const alpha = s.drawProgress < 1 ? 1.0 : s.life * s.life;
+            // 글로우 + 밝은 청백 본체 + 하이라이트
+            // 그려지는 방향: dir>0이면 왼쪽→오른쪽, dir<0이면 오른쪽→왼쪽
+            [
+                [2.5, 'rgba(100,180,255,0.20)', 1.0],
+                [1.0, '#1a4aaa',                0.80],
+                [0.6, '#4a9aee',                1.0],
+                [0.15, '#ccecff',               0.70],
+            ].forEach(([w, color, a]) => {
+                if (s.drawProgress < 0.01) return;
+                const fullHalf = s.length / 2;
+                // dir에 맞춰 그려지는 방향 결정
+                const fixedEnd = s.dir > 0 ? -fullHalf : fullHalf;   // 고정 끝
+                const progEnd  = s.dir > 0
+                    ? -fullHalf + s.length * s.drawProgress           // 왼→오
+                    :  fullHalf - s.length * s.drawProgress;          // 오→왼
+                const mid = (fixedEnd + progEnd) / 2;
+                ctx.save();
+                ctx.globalAlpha = alpha * a;
+                ctx.fillStyle   = color;
+                ctx.beginPath();
+                ctx.moveTo(fixedEnd, 0);
+                ctx.quadraticCurveTo(mid, -s.width * w * 0.5, progEnd, 0);
+                ctx.quadraticCurveTo(mid,  s.width * w * 0.5, fixedEnd, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            });
+            ctx.restore();
+        } else if (s.type === 'p2claw') {
+            // 3-way 할퀴기: 끝에서 시작으로 긁히는 방향 (drawSingleSlash 재활용)
+            ctx.save();
+            ctx.rotate(s.angle);
+            // 글로우(넓게) + 붉은 본체 + 하이라이트
+            [ [2.0, s.glow, 0.18], [0.85, '#cc2222', 0.55], [0.45, s.color, 1.0], [0.12, '#ffaaaa', 0.60] ]
+                .forEach(([w, color, alpha]) => {
+                    if (s.drawProgress < 0.01) return;
+                    const fullHalf = s.length / 2;
+                    const startX   = fullHalf;
+                    const endX     = fullHalf - fullHalf * 2 * s.drawProgress;
+                    const mid      = (startX + endX) / 2;
+                    ctx.save();
+                    ctx.globalAlpha *= alpha;
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.moveTo(startX, 0);
+                    ctx.quadraticCurveTo(mid, -s.width * w * 0.5, endX, 0);
+                    ctx.quadraticCurveTo(mid,  s.width * w * 0.5, startX, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                });
+            ctx.restore();
         } else if (s.type === 'bossDash') {
             // 일자 속도선 (이미 ctx.translate(s.cx, s.cy) 적용된 상태)
             const alpha = s.life * s.life;
@@ -7123,16 +7635,16 @@ function drawSlashEffects() {
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(-dir * len, 0);
-            ctx.strokeStyle = 'rgba(200,225,255,0.4)';
+            ctx.strokeStyle = s.isP2 ? 'rgba(100,180,255,0.35)' : 'rgba(200,225,255,0.4)';
             ctx.lineWidth   = thick * 4;
             ctx.lineCap     = 'round';
             ctx.stroke();
 
-            // 핵심 흰 선
+            // 핵심 선
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(-dir * len, 0);
-            ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+            ctx.strokeStyle = s.isP2 ? 'rgba(120,200,255,0.95)' : 'rgba(255,255,255,0.95)';
             ctx.lineWidth   = thick;
             ctx.lineCap     = 'round';
             ctx.stroke();
@@ -8880,7 +9392,8 @@ MAP_DATA.push({
             width: 40, height: 160,
             toMap: 12, spawnX: 2760, spawnY: 580,
             direction: 'left',
-            groundSpawn: true
+            groundSpawn: true,
+            requireBossDefeated: true   // 보스 생존 중 이전 맵으로 돌아가기 불가
         }
     ],
 
