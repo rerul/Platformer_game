@@ -5417,7 +5417,7 @@ function updateEnemies() {
             e._dotTimer = (e._dotTimer || 0) + 1;
             if (e._dotTimer >= 60) {
                 e._dotTimer = 0;
-                const dot = e.maxHp * 0.005;
+                const dot = e.maxHp * 0.01;
                 e.hp = Math.max(e.hp - dot, 0);
                 if (e.hp <= 0) {
                     e.isDead = true;
