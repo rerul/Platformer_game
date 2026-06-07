@@ -5098,10 +5098,10 @@ const ENEMY_TYPES = {
         detectRange:    1400,
         loseRange:      2000,
         attackRange:    168,  // 공격1 인식사거리
-        attackDamage:   18,
+        attackDamage:   12,
         attackCooldown: 128,  // 공격1 쿨타임 (150 × 0.85)
         // 공격2 돌진 파라미터
-        atk2Damage:     14,
+        atk2Damage:     13,
         atk2Windup:     40,       // 공격2 딜레이 프레임
         atk2DashSpeed:  38,       // 돌진 초기 dx
         atk2DashDecay:  0.88,     // 매 프레임 dx에 곱하는 감쇄율
@@ -5115,7 +5115,7 @@ const ENEMY_TYPES = {
         leapSpeed:       13,
         leapJumpPower:   14,
         // 공격3 파라미터
-        atk3Damage:      22,
+        atk3Damage:      17,
         atk3Cooldown:    450,    // 공격3 전용 쿨타임 (7.5초)
         atk3IdleNeeded:  120,    // 공격1/2 미발동 필요 프레임 (2초)
         atk3FarDist:     500,    // 발동 최소 거리
@@ -5537,7 +5537,7 @@ function updateEnemies() {
                     const inRange = Math.abs(distX) < e.attackRange &&
                                     Math.abs(distY) < e.height;
                     if (inRange) {
-                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
+                        player.hp              = Math.max(player.hp - (bossPhase2.active ? 10 : Math.round(e.attackDamage)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = (distX > 0 ? -1 : 1) * 5;
@@ -5684,7 +5684,7 @@ function updateEnemies() {
                     // 크기 기준 판정
                     if (Math.abs(px2 - ex2) < e.width  &&
                         Math.abs(py2 - ey2) < e.height) {
-                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
+                        player.hp              = Math.max(player.hp - (bossPhase2.active ? 10 : Math.round(e.attackDamage)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = e.attackDirX * 6;
@@ -6092,7 +6092,7 @@ function updateEnemies() {
                                 const sw = 13;
                                 if (player.x + player.width > sp.x - sw &&
                                     player.x < sp.x + sw && !player.isInvincible) {
-                                    player.hp = Math.max(0, player.hp - (e.atk3Damage || 25));
+                                    player.hp = Math.max(0, player.hp - 13);
                                     player.isInvincible = true;
                                     player.invincibleTimer = 60;
                                     player.dy = -10;
@@ -6104,10 +6104,61 @@ function updateEnemies() {
                         e.state = 'attack';
                         e._p2a4SpikeTimer--;
                         if (e._p2a4SpikeTimer <= 0) {
+                            // 체력 30% 미만 → 2타
+                            if (e.hp / e.maxHp < 0.30 && !e._p2a4Hit2Done) {
+                                // 1타 가시 위치에서 spikeGap/2 밀어서 빈 구역에 가시
+                                const spikeGap = 151;
+                                const offset   = spikeGap / 2;
+                                e._p2a4Spikes2 = (e._p2a4Spikes || []).map(sp => ({ x: sp.x + offset }));
+                                e._p2a4Phase      = 'flash2';
+                                e._p2a4FlashTimer = 32;
+                                e._p2a4SpikeUp    = false;
+                            } else {
+                                // 종료 → idle
+                                e._p2a4Phase    = undefined;
+                                e._p2a4Spikes   = null;
+                                e._p2a4Spikes2  = null;
+                                e._p2a4SpikeUp  = false;
+                                e._p2a4Hit2Done = false;
+                                e._p2Attack     = 'atk1';
+                                e._p2LastAttack = 'atk4';
+                                e._p2a1Phase    = 'idle';
+                                e._p2a1Cooldown = 0;
+                            }
+                        }
+
+                    } else if (e._p2a4Phase === 'flash2') {
+                        // 2타 범위 표시 (기모으기 없음)
+                        e.state = 'attack';
+                        e._p2a4FlashTimer--;
+                        if (e._p2a4FlashTimer <= 0) {
+                            e._p2a4Phase      = 'spike2';
+                            e._p2a4SpikeTimer = 55;
+                            e._p2a4SpikeUp    = true;
+                            e._p2a4Hit2Done   = true;
+                            // 2타 피해 판정
+                            (e._p2a4Spikes2 || []).forEach(sp => {
+                                const sw = 13;
+                                if (player.x + player.width > sp.x - sw &&
+                                    player.x < sp.x + sw && !player.isInvincible) {
+                                    player.hp = Math.max(0, player.hp - 13);
+                                    player.isInvincible = true;
+                                    player.invincibleTimer = 60;
+                                    player.dy = -10;
+                                }
+                            });
+                        }
+
+                    } else if (e._p2a4Phase === 'spike2') {
+                        e.state = 'attack';
+                        e._p2a4SpikeTimer--;
+                        if (e._p2a4SpikeTimer <= 0) {
                             // 종료 → idle
                             e._p2a4Phase    = undefined;
                             e._p2a4Spikes   = null;
+                            e._p2a4Spikes2  = null;
                             e._p2a4SpikeUp  = false;
+                            e._p2a4Hit2Done = false;
                             e._p2Attack     = 'atk1';
                             e._p2LastAttack = 'atk4';
                             e._p2a1Phase    = 'idle';
@@ -6271,7 +6322,7 @@ function updateEnemies() {
                         const pOvX = player.x + player.width  > e.x && player.x < e.x + e.width;
                         const pOvY = player.y + player.height > e.y && player.y < e.y + e.height;
                         if (pOvX && pOvY) {
-                            player.hp              = Math.max(player.hp - Math.round(e.atk2Damage * 0.6), 0);
+                            player.hp              = Math.max(player.hp - 12, 0);
                             player.isInvincible    = true;
                             player.invincibleTimer = 60;
                             player.dx = e._p2a1DashDir * 12;
@@ -6474,7 +6525,7 @@ function updateEnemies() {
                     const inX3     = Math.abs(px3 - strikeX) < e.atk3RangeX;
                     const inY3     = py3 > strikeY - e.atk3RangeY && py3 < strikeY + 40;
                     if (inX3 && inY3 && !player.isInvincible) {
-                        player.hp              = Math.max(player.hp - Math.round(e.atk3Damage * (bossPhase2.active ? 0.6 : 1)), 0);
+                        player.hp              = Math.max(player.hp - (bossPhase2.active ? 17 : Math.round(e.atk3Damage)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = (px3 - strikeX > 0 ? 1 : -1) * 9;
@@ -6500,7 +6551,7 @@ function updateEnemies() {
                         const inX3   = Math.abs(px3 - landX) < e.atk3RangeX;
                         const inY3   = py3 > landY - e.atk3RangeY && py3 < landY + 20;
                         if (inX3 && inY3 && !player.isInvincible) {
-                            player.hp              = Math.max(player.hp - Math.round(e.atk3Damage * (bossPhase2.active ? 0.6 : 1)), 0);
+                            player.hp              = Math.max(player.hp - (bossPhase2.active ? 17 : Math.round(e.atk3Damage)), 0);
                             player.isInvincible    = true;
                             player.invincibleTimer = 60;
                             player.dx = (px3 - landX > 0 ? 1 : -1) * 9;
@@ -6556,7 +6607,7 @@ function updateEnemies() {
                 const pOvX = player.x + player.width  > dashHitX && player.x < dashHitX + dashHitW;
                 const pOvY = player.y + player.height > dashHitY && player.y < dashHitY + dashHitH;
                 if (pOvX && pOvY && !player.isInvincible) {
-                    player.hp              = Math.max(player.hp - Math.round(e.atk2Damage * (bossPhase2.active ? 0.6 : 1)), 0);
+                    player.hp              = Math.max(player.hp - (bossPhase2.active ? 11 : Math.round(e.atk2Damage)), 0);
                     player.isInvincible    = true;
                     player.invincibleTimer = 60;
                     player.dx = e._atk2DashDir * 10;
@@ -6616,7 +6667,7 @@ function updateEnemies() {
                         const inX = pCenterX >= bossFrontX && pCenterX <= bossFrontX + atk1RangeX;
                         const inY = pCenterY >= hitTop     && pCenterY <= hitBottom;
                         if (inX && inY && !player.isInvincible) {
-                            player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
+                            player.hp              = Math.max(player.hp - (bossPhase2.active ? 10 : Math.round(e.attackDamage)), 0);
                             player.isInvincible    = true;
                             player.invincibleTimer = 60;
                             const bdxHit           = pCenterX - (e.x + e.width / 2);
@@ -6878,7 +6929,7 @@ function updateEnemies() {
                 if (!player.isInvincible) {
                     if (ar.x + ar.w > player.x && ar.x < player.x + player.width &&
                         ar.y + ar.h > player.y && ar.y < player.y + player.height) {
-                        player.hp              = Math.max(player.hp - Math.round(e.attackDamage * (bossPhase2.active ? 0.6 : 1)), 0);
+                        player.hp              = Math.max(player.hp - (bossPhase2.active ? 10 : Math.round(e.attackDamage)), 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 60;
                         player.dx = ar.dx * 0.5;
@@ -7136,7 +7187,7 @@ function drawEnemies() {
             if (e._finalPatternActive) {
                 const ph = e._finalPatternPhase;
                 // 숨겨야 할 페이즈
-                const hidden = ph === 'roar' || ph === 'active' || ph === 'intro'
+                const hidden = ph === 'active' || ph === 'intro'
                     || e._fpCrackPhase === 'wait1' || e._fpCrackPhase === 'crack';
                 if (hidden) return;
 
@@ -7981,52 +8032,46 @@ function drawP2A4Effects(boss) {
         });
     }
 
-    // 범위 표시 (flash 단계) — 십자 반짝임 제거
-    if (phase === 'flash') {
-        const prog = 1 - (boss._p2a4FlashTimer || 0) / 42;
+    // 범위 표시 (flash / flash2 단계)
+    if (phase === 'flash' || phase === 'flash2') {
+        const totalFlash = phase === 'flash2' ? 32 : 42;
+        const prog = 1 - (boss._p2a4FlashTimer || 0) / totalFlash;
+        const spikes = phase === 'flash2' ? boss._p2a4Spikes2 : boss._p2a4Spikes;
 
-        if (boss._p2a4Spikes) {
+        if (spikes) {
             const spikeH = canvas.height;
             ctx.globalAlpha = 0.55 + prog * 0.30;
-            boss._p2a4Spikes.forEach(sp => {
+            spikes.forEach(sp => {
                 const sx = (sp.x - camera.x) * SCALE;
                 const rectW = 36;
-                ctx.fillStyle = 'rgba(255,60,60,0.55)';
+                ctx.fillStyle = 'rgba(30,80,255,0.50)';
                 ctx.fillRect(sx - rectW / 2, 0, rectW, spikeH);
-                ctx.strokeStyle = 'rgba(255,100,100,0.95)';
+                ctx.strokeStyle = 'rgba(80,160,255,0.95)';
                 ctx.lineWidth   = 2;
                 ctx.strokeRect(sx - rectW / 2, 0, rectW, spikeH);
             });
         }
     }
 
-
-    // 가시 렌더 (spike 단계)
-    if (phase === 'spike' && boss._p2a4Spikes && boss._p2a4SpikeUp) {
+    // 가시 렌더 helper
+    function renderSpikes(spikes, spikeTimer) {
+        if (!spikes || !boss._p2a4SpikeUp) return;
         const SPIKE_TOTAL = 55;
-        const st     = boss._p2a4SpikeTimer || 0;
-        // 올라오는 비율: 0→1 (처음 8프레임에 걸쳐 빠르게 상승)
-        const riseT  = SPIKE_TOTAL - st;   // 0부터 증가
-        const rise   = Math.min(1, riseT / 8);
-        // 사라지는 비율: 마지막 10프레임에 걸쳐 fade
+        const st    = spikeTimer || 0;
+        const riseT = SPIKE_TOTAL - st;
+        const rise  = Math.min(1, riseT / 8);
         const vanish = st < 10 ? st / 10 : 1;
         const alpha  = vanish;
-
         const groundY = canvas.height;
-        const fullH   = groundY;
-        const spikeH  = fullH * rise;   // 바닥에서 위쪽으로 채워짐
+        const spikeH  = groundY * rise;
         const spikeW  = 18;
 
-        boss._p2a4Spikes.forEach(sp => {
+        spikes.forEach(sp => {
             const sx = (sp.x - camera.x) * SCALE;
             const sy = groundY;
 
-            ctx.globalAlpha = alpha * 0.28;
-            ctx.fillStyle   = '#ff2200';
-            ctx.fillRect(sx - spikeW * 1.8, sy - spikeH * 1.05, spikeW * 3.6, spikeH * 1.05);
-
             ctx.globalAlpha = alpha * 0.92;
-            ctx.fillStyle   = '#cc1100';
+            ctx.fillStyle   = '#1133aa';
             ctx.beginPath();
             ctx.moveTo(sx - spikeW, sy);
             ctx.lineTo(sx + spikeW, sy);
@@ -8035,7 +8080,7 @@ function drawP2A4Effects(boss) {
             ctx.fill();
 
             ctx.globalAlpha = alpha;
-            ctx.strokeStyle = '#ff4422';
+            ctx.strokeStyle = '#44aaff';
             ctx.lineWidth   = 2;
             ctx.beginPath();
             ctx.moveTo(sx - spikeW, sy);
@@ -8044,6 +8089,10 @@ function drawP2A4Effects(boss) {
             ctx.stroke();
         });
     }
+
+    // 가시 렌더 (spike: 1타, spike2: 2타)
+    if (phase === 'spike')  renderSpikes(boss._p2a4Spikes,  boss._p2a4SpikeTimer);
+    if (phase === 'spike2') renderSpikes(boss._p2a4Spikes2, boss._p2a4SpikeTimer);
 
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -8140,21 +8189,22 @@ function drawP2A3Shockwaves() {
     ctx.restore();
 }
 function drawBossRoarRings() {
-    const boss = enemies.find(e => e.type === 'boss' && e._finalPatternPhase === 'roar' && e._roarRings);
+    const boss = enemies.find(e => e.type === 'boss' &&
+        (e._finalPatternPhase === 'roar') && e._roarRings);
     if (!boss || boss._roarRings.length === 0) return;
 
     ctx.save();
-    // drawSlashEffects와 동일한 좌표계 (scale+translate 적용된 상태)
     boss._roarRings.forEach(ring => {
-        // 링 업데이트 (draw 안에서 처리해 update 분리 불필요)
-        ring.r    += (ring.maxR - ring.r) * 0.07 + 4;
-        ring.life -= 0.022;
+        // 링 확장: 빠르게 퍼져나가기
+        ring.r    += ring.r < ring.maxR * 0.3
+            ? 18 + ring.r * 0.04          // 초반: 빠르게 가속
+            : 28 + ring.r * 0.02;         // 후반: 일정 속도
+        ring.life -= 0.018;
         if (ring.life < 0) ring.life = 0;
 
         const alpha = ring.life * ring.life;
         if (alpha <= 0) return;
 
-        // 월드 좌표로 역변환 (이미 scale+translate 적용된 컨텍스트)
         const wx = ring.x / SCALE + camera.x;
         const wy = ring.y / SCALE + cameraY;
         const wr = ring.r / SCALE;
@@ -8587,8 +8637,8 @@ function _triggerBossFinalPattern(e) {
     e.y = world.height - 60 - e.height;
     e.dx = 0; e.dy = 0;
     e._finalPatternActive = true;
-    e._finalPatternPhase  = 'roar';
-    e._finalPatternTimer  = 110;
+    e._finalPatternPhase  = 'center';   // 중앙 등장 대기 → roar → active
+    e._finalPatternTimer  = 20;         // center 대기 시간
     e._finalPatternTick   = 0;
     e._roarRingTimer      = 0;
     e._roarRings          = [];
@@ -8606,10 +8656,42 @@ function _triggerBossFinalPattern(e) {
 function _updateBossFinalPattern(e) {
     e._finalPatternTick = (e._finalPatternTick || 0) + 1;
 
-    if (e._finalPatternPhase === 'roar') {
+    if (e._finalPatternPhase === 'center') {
+        // 화면 중앙 등장 후 대기 — 보스 고정
         e.dx = 0; e.dy = 0;
         e._finalPatternTimer--;
         if (e._finalPatternTimer <= 0) {
+            // roar 페이즈 진입
+            e._finalPatternPhase = 'roar';
+            e._finalPatternTimer = 110;
+            e._roarRingTimer     = 0;
+            e._roarRings         = [];
+        }
+
+    } else if (e._finalPatternPhase === 'roar') {
+        e.dx = 0; e.dy = 0;
+        e.isInvincible = true;   // roar 중 피격 무적
+        e._finalPatternTimer--;
+
+        // 링 스폰: 처음엔 빠르게, 점점 간격 벌어지게 (총 6~7개)
+        e._roarRingTimer = (e._roarRingTimer || 0) + 1;
+        const elapsed = 110 - e._finalPatternTimer;
+        // 간격: 처음 8프레임, 이후 점점 늘어남
+        const interval = Math.max(8, Math.floor(8 + elapsed * 0.3));
+        if (e._roarRingTimer >= interval) {
+            e._roarRingTimer = 0;
+            const cx = (e.x + e.width  / 2 - camera.x) * SCALE;
+            const cy = (e.y + e.height / 2 - cameraY)  * SCALE;
+            e._roarRings.push({
+                x: cx, y: cy,
+                r: 0,
+                maxR: Math.max(canvas.width, canvas.height) * 1.2,
+                life: 1.0,
+            });
+        }
+
+        if (e._finalPatternTimer <= 0) {
+            e.isInvincible = false;
             e._finalPatternPhase = 'active';
             e._finalPatternTimer = 0;
         }
@@ -8840,7 +8922,7 @@ function spawnP2ClawAtTarget(e, targetX, targetY, angleRad, sizeScale = 1.0) {
         const localX = Math.abs( dx * cosA + dy * sinA);
         const localY = Math.abs(-dx * sinA + dy * cosA);
         if (localX < hitHalfLen && localY < hitHalfThick) {
-            const dmg = Math.round((e.atk2Damage || 20) * 0.55);
+            const dmg = 11;
             player.hp              = Math.max(player.hp - dmg, 0);
             player.isInvincible    = true;
             player.invincibleTimer = 50;
@@ -8961,7 +9043,7 @@ function updateSlashEffects() {
                     const pOvY = player.y + player.height > ly && player.y < ly + lh;
                     if (pOvX && pOvY) {
                         const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
-                        const dmg  = boss ? Math.round((boss.atk2Damage || 20) * 0.40) : 10;
+                        const dmg  = 10;
                         player.hp              = Math.max(player.hp - dmg, 0);
                         player.isInvincible    = true;
                         player.invincibleTimer = 45;
