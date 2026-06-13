@@ -1098,6 +1098,7 @@ window.addEventListener('keydown', (e) => {
         keys.spacePressed = true;
     }
     if (key === 'e') handleEKey();
+    if (key === 'r') handleHealKey();
     if (key === 'f') {
         if (dialogue.active) {
             // 대화 중: 꾹 눌러도 빠르게 넘기기 허용 (fPressed 가드 없음)
@@ -1259,13 +1260,12 @@ window.addEventListener('keydown', (e) => {
         const boss = enemies.find(e => e.type === 'boss' && e._phase2Active && !e.isDead);
         if (boss) _triggerBossFinalPattern(boss);
     }
-    // 테스트용 단축키: V = 마지막 패턴 화면 중앙 연속 할퀴기 강제 발동
+    // 테스트용 단축키: V = 마지막 패턴 처음부터 강제 발동
     if (key === 'v') {
-        const boss = enemies.find(e => e.type === 'boss' && e._phase2Active && !e.isDead);
+        const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
         if (boss) {
-            if (!boss._finalPatternActive) _triggerBossFinalPattern(boss);
-            // 이미 active 단계면 즉시 슬래시 버스트 트리거
-            boss._fpSlashBurstQueued = true;
+            boss._phase2Active = true;
+            _triggerBossFinalPattern(boss);
         }
     }
 });
@@ -1539,6 +1539,17 @@ let dummies   = [];
 const clearedMaps = new Set();
 let bossMapReached = false;  // 보스맵(맵13) 최초 도달 여부
 let savepointReached = false;  // 세이브포인트(맵8) 도달 여부
+let cliffReached = false;  // 절벽 위(맵4) 최초 도달 여부
+
+// ── 회복 아이템 (r키) ─────────────────────────────────────────────────
+const healItem = {
+    count:     1,       // 초기 1개 지급
+    max:       1,       // 최대 1개
+    healing:   false,
+    tickTimer: 0,       // 6프레임마다 1씩 회복
+    remaining: 0,       // 남은 회복량
+    pulse:     0,
+};
 
 // ── 보스 2페이즈 전환 연출 ────────────────────────────────────────────
 const bossPhase2 = {
@@ -1656,12 +1667,10 @@ const bossHalfSeq = {
 
     // 대화 라인
     LINES1: [
-        { text: '...!?' },
-        { text: '...하.' },
-        { text: '그래, 이 정도는 되어야 하지.' },
+        { text: '...' },
     ],
     LINES2: [
-        { text: '이제부터가 진짜다.' },
+        { text: '...' },
     ],
     _dialogueIdx:  0,
     _dialogueLines: null,
@@ -2030,6 +2039,14 @@ function loadMap(mapIndex) {
     currentMapIndex = mapIndex;
     world.width     = map.worldWidth;
     world.height    = map.worldHeight;
+
+    // 맵 전환 시 투사체·궁극기 즉시 리셋 (다른 맵에서 발동되는 버그 방지)
+    if (typeof projectile !== 'undefined') projectile.reset();
+    if (typeof player !== 'undefined' && player.ultPhase !== 'none') {
+        player.ultPhase   = 'none';
+        player.ultTimer   = 0;
+        player.ultHitDone = false;
+    }
     // 보스맵 벗어날 때 체력바 숨김 + 보스BGM 정지 후 일반BGM 복구
     if (mapIndex !== 13 && typeof bossHpBar !== 'undefined') {
         bossHpBar.visible    = false;
@@ -2107,9 +2124,10 @@ function loadMap(mapIndex) {
         }
     }
 
-    // 세이브포인트(맵8) 방문 시 플래그 활성화
+    // 세이브포인트(맵8) 방문 시 플래그 활성화 + 회복 아이템 1개 보충 (최대 2개)
     if (mapIndex === 8) {
         savepointReached = true;
+        healItem.count = Math.min(healItem.max, healItem.count + 1);
     } else {
         // 다른 맵으로 이동하면 힌트 숨김
         savepointHint.active = false;
@@ -2231,8 +2249,8 @@ function _applyDeath() {
     projectile.reset();
     player.lastTeleportTime = 0;
 
-    // 부활 위치: 보스맵 도달 → 맵12 오른쪽 포탈 근처, 세이브포인트 → 맵8, 기본 → 맵2
-    const respawnMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : 2);
+    // 부활 위치: 보스맵 도달 → 맵12, 세이브포인트 → 맵8, 절벽 위 → 맵4, 기본 → 맵2
+    const respawnMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : (cliffReached ? 4 : 2));
     const respawnMap      = MAP_DATA[respawnMapIndex];
     loadMap(respawnMapIndex);
 
@@ -2242,12 +2260,17 @@ function _applyDeath() {
 
     // 플레이어 상태 리셋
     // 보스맵 도달 시 맵12 오른쪽 포탈(x=2840) 앞에 스폰
-    player.x            = bossMapReached ? 2600 : respawnMap.spawnX;
+    // 절벽 위(맵4) 부활 시 구멍 바로 오른쪽(x=420)에 스폰
+    player.x = bossMapReached ? 2600 : (respawnMapIndex === 4 ? 420 : respawnMap.spawnX);
     player.y            = respawnMap.spawnY;
     player.dx           = 0;
     player.dy           = 0;
     player.hp           = player.maxHp;
     player.gauge        = 0;
+    healItem.count     = Math.min(healItem.max, healItem.count + 1);  // 부활마다 1개 보충 (최대 1개)
+    healItem.healing   = false;
+    healItem.remaining = 0;
+    healItem.tickTimer = 0;
     player.isInvincible = false;
     player.invincibleTimer = 0;
     player.isDashing    = false;
@@ -2291,10 +2314,10 @@ function update() {
             pauseMenu.fadeAlpha = Math.min(pauseMenu.fadeTimer / pauseMenu.FADE_DUR, 1);
             if (pauseMenu.fadeTimer >= pauseMenu.FADE_DUR) {
                 // 완전 암전 → 실제 이동 수행
-                const destMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : 2);
+                const destMapIndex = bossMapReached ? 12 : (savepointReached ? 8 : (cliffReached ? 4 : 2));
                 const destMap = MAP_DATA[destMapIndex];
                 loadMap(destMapIndex);
-                player.x = bossMapReached ? 2600 : destMap.spawnX;
+                player.x = bossMapReached ? 2600 : (destMapIndex === 4 ? 420 : destMap.spawnX);
                 player.y = destMap.spawnY;
                 player.dx = 0; player.dy = 0;
                 player.grounded = true;
@@ -2758,6 +2781,22 @@ function update() {
     updateEnemies();
     updateDummies();
     updateBossStoneParticles();
+    updateSpikeburstParticles();
+    // 회복 아이템 업데이트
+    if (healItem.healing) {
+        healItem.tickTimer++;
+        healItem.pulse++;
+        if (healItem.tickTimer >= 6) {
+            healItem.tickTimer = 0;
+            if (player.hp < player.maxHp && healItem.remaining > 0) {
+                player.hp = Math.min(player.maxHp, player.hp + 1);
+                healItem.remaining--;
+            }
+        }
+        if (healItem.remaining <= 0 || player.hp >= player.maxHp) {
+            healItem.healing = false;
+        }
+    }
     updateSlashEffects();
     updateScreenShards();
     updateP2A3Shockwaves();
@@ -2839,7 +2878,7 @@ function checkPlayerAttackHit() {
     let hitCharged = false;  // 이번 공격에 게이지 충전 여부
 
     enemies.forEach(e => {
-        if (e.isDead || e.isInvincible) return;
+        if (e.isDead || e.isInvincible || e._roarInvincible) return;
 
         const scaleW   = (e.type === 'enemy1' && (e.attackFrame === 2 || e.attackFrame === 3)) ? 1.25 : 1.0;
         const scaleH   = (e.type === 'enemy1' && e.attackFrame === 2) ? 1.15 : 1.0;
@@ -3761,6 +3800,7 @@ function drawStump(ctx, x, y, w, h) {
     drawUltParticles();
     drawSlashEffects();
     drawBossStoneParticles();
+    drawSpikeburstParticles();
     drawBossRoarRings();
     drawP2A3Shockwaves();
     // p2 공격4 이펙트 (gather, flash, spike)
@@ -3768,8 +3808,41 @@ function drawStump(ctx, x, y, w, h) {
         const _b4 = enemies.find(e => e.type === 'boss' && e._p2Attack === 'atk4');
         if (_b4) drawP2A4Effects(_b4);
     }
-    // p2 공격3 강화 기모으기 파티클 (별도 배열, 고정 타겟)
+    // p2 공격3 강화 기모으기 + 마지막패턴 prelude 기모으기
     drawP2A3GatherParticles();
+
+    // ── 마지막 패턴 wave 예고선 ───────────────────────────────────────
+    {
+        const _bw = enemies.find(e => e.type === 'boss' &&
+            e._finalPatternPhase === 'wave_range' && e._fpWaveAngles);
+        if (_bw) {
+            const wi      = _bw._fpWaveIndex || 1;
+            const total   = 42 - wi * 4;
+            const prog    = 1 - _bw._finalPatternTimer / total;
+            const pulse   = 0.5 + 0.5 * Math.sin(Date.now() / 60);
+            const cx      = _bw._fpWaveCX || world.width  / 2;
+            const cy      = _bw._fpWaveCY || world.height * 0.62;
+            const len     = (2200 + wi * 200) / 2;
+            const thick   = (22 + wi * 6) * 1.5;
+            const alpha   = (0.25 + prog * 0.20) * (0.8 + pulse * 0.2);
+
+            ctx.save();
+            _bw._fpWaveAngles.forEach(aRad => {
+                ctx.globalAlpha = alpha;
+                ctx.translate(cx, cy);
+                ctx.rotate(aRad);
+                ctx.fillStyle = 'rgba(80,160,255,0.30)';
+                ctx.fillRect(-len, -thick / 2, len * 2, thick);
+                ctx.strokeStyle = 'rgba(140,210,255,0.70)';
+                ctx.lineWidth   = 2.5;
+                ctx.strokeRect(-len, -thick / 2, len * 2, thick);
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(SCALE, SCALE);
+                ctx.translate(-camera.x, -cameraY);
+            });
+            ctx.restore();
+        }
+    }
     // 세이브포인트 회복 이펙트 (월드 좌표계)
     savepointEffect.draw();
 
@@ -3995,8 +4068,9 @@ function startDash() {
 }
 
 function handleEKey() {
-    // 대화 중엔 투사체 발사 및 순간이동 차단
+    // 대화 중, bossHalfSeq 연출 중엔 투사체 발사 및 순간이동 차단
     if (dialogue.active || tutorial.active) return;
+    if (bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done') return;
     const now = Date.now();
     if (projectile.active) {
         // 출발~도착 사이에 잔상 스프라이트 생성
@@ -4015,7 +4089,19 @@ function handleEKey() {
         playSound('TELEPORT');
     }
 }
-// [SECTION 10] 잔상 시스템 (Afterimages)
+function handleHealKey() {
+    if (dialogue.active || tutorial.active) return;
+    if (player.isDead || player.hp <= 0) return;
+    if (healItem.healing) return;
+    if (healItem.count <= 0) return;
+    if (player.hp >= player.maxHp) return;
+    healItem.count--;
+    healItem.healing   = true;
+    healItem.remaining = 30;   // 30회 회복 (6프레임×30 = 180프레임 = 3초)
+    healItem.tickTimer = 0;
+    healItem.pulse     = 0;
+}
+
 const afterimages = [];
 
 function createAfterimage() {
@@ -4596,7 +4682,7 @@ function drawUI() {
     const barW    = 570;
     const barH    = 45;
     const radius  = 6;
-    const hpRatio = Math.max(player.hp, 0) / player.maxHp;
+    const hpRatio = Math.max(Math.floor(player.hp), 0) / player.maxHp;
 
     // HP 라벨 (검은 테두리)
     ctx.font = `bold 30px ${DIALOGUE_FONT}`;
@@ -4645,19 +4731,46 @@ function drawUI() {
     roundRect(ctx, fillX, barY, fillW, barH, radius);
     ctx.stroke();
 
-    // HP 수치 텍스트 (검은 테두리)
-    const hpText = `${Math.max(player.hp, 0)} / ${player.maxHp}`;
+    // HP 수치 텍스트 (검은 테두리) — Math.floor로 소수 방지
+    const hpText = `${Math.max(Math.floor(player.hp), 0)} / ${player.maxHp}`;
     ctx.font = `bold 22px ${DIALOGUE_FONT}`;
     ctx.textAlign = 'center';
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.lineWidth = 4;       // 3 → 4
+    ctx.lineWidth = 4;
     ctx.lineJoin = 'round';
     ctx.strokeText(hpText, fillX + fillW / 2, barY + barH - 12);
     ctx.fillStyle = 'rgba(255, 220, 220, 0.95)';
     ctx.fillText(hpText, fillX + fillW / 2, barY + barH - 12);
     ctx.textAlign = 'left';
 
-    // ── 필살기 게이지 바 ──────────────────────────────────────────
+    // ── 회복 중: HP바 끝 마커 + 링만 (오버레이 없음) ──────────────────
+    if (healItem.healing) {
+        const pulse   = Math.sin(healItem.pulse / 8 * Math.PI * 2);
+        const hpW     = (fillW - 6) * Math.min(Math.floor(player.hp) / player.maxHp, 1);
+        const markerX = fillX + 3 + hpW;
+
+        // 마커 세로선
+        const mW = 5 + Math.abs(pulse) * 2;
+        ctx.fillStyle = `rgba(120,255,160,${0.90 + pulse * 0.10})`;
+        roundRect(ctx, markerX - mW / 2, barY + 3, mW, barH - 6, 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(220,255,230,${0.7 + pulse * 0.15})`;
+        roundRect(ctx, markerX - mW / 2, barY + 3, mW, (barH - 6) * 0.4, 2);
+        ctx.fill();
+
+        // 퍼져나가는 링 2개
+        [0, 15].forEach(offset => {
+            const t = ((healItem.pulse + offset) % 30) / 30;
+            const r = t * (barH * 0.85);
+            const a = (1 - t) * 0.55;
+            if (a <= 0) return;
+            ctx.beginPath();
+            ctx.arc(markerX, barY + barH / 2, r, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(100,255,150,${a})`;
+            ctx.lineWidth   = 2 * (1 - t);
+            ctx.stroke();
+        });
+    }
     const gBarY     = barY + barH + 14;
     const gBarH     = 30;
     const gBarW     = fillW * 0.85;          // HP바보다 약간 짧게
@@ -4730,6 +4843,35 @@ function drawUI() {
             ctx.fillText(hint, gBarX + gBarW / 2, gBarY + gBarH - 7);
         }
         ctx.textAlign = 'left';
+    }
+
+    // ── 회복 아이템 점 표시 (SP바 바로 아래, 같은 왼쪽 정렬) ─────────────
+    {
+        const healRowY  = gBarY + gBarH + 14;   // SP바 아래 동일 간격
+        const dotCX     = barX + 7;             // HP/SP 라벨과 같은 왼쪽 끝
+        const dotCY     = healRowY + gBarH / 2; // 높이 중앙 = gBarH 기준
+        const filled    = healItem.count > 0;
+        const glowing   = healItem.healing;
+        const glow      = glowing ? 0.7 + Math.sin(healItem.pulse / 5) * 0.3 : 1;
+        // 외곽
+        ctx.beginPath();
+        ctx.arc(dotCX, dotCY, 8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fill();
+        // 채움
+        ctx.beginPath();
+        ctx.arc(dotCX, dotCY, 6.5, 0, Math.PI * 2);
+        ctx.fillStyle = filled
+            ? `rgba(80,220,120,${glow})`
+            : 'rgba(35,55,35,0.7)';
+        ctx.fill();
+        // 하이라이트
+        if (filled) {
+            ctx.beginPath();
+            ctx.arc(dotCX - 2, dotCY - 2, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(200,255,210,0.7)`;
+            ctx.fill();
+        }
     }
 }
 
@@ -4842,7 +4984,59 @@ const bossHpBar = {
             ctx.fill();
         }
 
-        // 바 안쪽 테두리
+        // 2페이즈 도트 데미지 시각화 — 체력 동결 대기 중에만 숨김
+        const boss = enemies.find(e => e.type === 'boss' && !e.isDead);
+        if (boss && boss._phase2Active && displayRatio > 0
+            && !boss._finalPatternPending) {
+            // 파동 타이머
+            if (this._drainPulse === undefined) this._drainPulse = 0;
+            this._drainPulse = (this._drainPulse + 1) % 48;
+
+            const fillW   = (barW - 6) * displayRatio;
+            const markerX = barX + 3 + fillW;
+            const midY    = barY + barH / 2;
+            const pulse   = Math.sin(this._drainPulse / 48 * Math.PI * 2);
+
+            // 파란 마커 세로선
+            const markerH  = barH - 6;
+            const markerW  = 4 + Math.abs(pulse) * 3;
+            ctx.fillStyle  = `rgba(80,180,255,${0.85 + pulse * 0.15})`;
+            roundRect(ctx, markerX - markerW / 2, barY + 3, markerW, markerH, 2);
+            ctx.fill();
+
+            // 흰 하이라이트
+            ctx.fillStyle = `rgba(220,240,255,${0.6 + pulse * 0.2})`;
+            roundRect(ctx, markerX - markerW / 2, barY + 3, markerW, markerH * 0.38, 2);
+            ctx.fill();
+
+            // 퍼져나가는 파동 링 (2개, 위상 차이)
+            [0, 24].forEach(offset => {
+                const t = ((this._drainPulse + offset) % 48) / 48;
+                const r = t * (barH * 0.9);
+                const a = (1 - t) * 0.65;
+                if (a <= 0) return;
+                ctx.beginPath();
+                ctx.arc(markerX, midY, r, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(100,200,255,${a})`;
+                ctx.lineWidth   = 2.5 * (1 - t);
+                ctx.stroke();
+            });
+
+            // 왼쪽으로 흘러가는 파티클 흔적
+            for (let i = 0; i < 4; i++) {
+                const tx   = ((this._drainPulse / 48 + i * 0.25) % 1);
+                const px   = markerX - tx * fillW * 0.35;
+                const py   = midY + (Math.sin(tx * Math.PI * 6 + i) * 4);
+                const pa   = (1 - tx) * 0.5;
+                const pr   = 2.5 * (1 - tx * 0.5);
+                ctx.beginPath();
+                ctx.arc(px, py, pr, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(120,210,255,${pa})`;
+                ctx.fill();
+            }
+        }
+
+
         ctx.strokeStyle = 'rgba(180, 40, 40, 0.85)';
         ctx.lineWidth   = 2;
         roundRect(ctx, barX, barY, barW, barH, radius);
@@ -5412,8 +5606,9 @@ function updateEnemies() {
         if (e.cooldownTimer > 0) e.cooldownTimer--;
         if (e.type === 'boss' && e._atk2CooldownTimer > 0) e._atk2CooldownTimer--;
 
-        // 2페이즈 도트 데미지: 매초(60프레임) 최대체력의 0.5%
-        if (e.type === 'boss' && e._phase2Active && !e.isDead) {
+        // 2페이즈 도트 데미지: 매초(60프레임) 최대체력의 0.5% (체력 동결 대기 중만 중지)
+        if (e.type === 'boss' && e._phase2Active && !e.isDead
+            && !e._finalPatternPending) {
             e._dotTimer = (e._dotTimer || 0) + 1;
             if (e._dotTimer >= 60) {
                 e._dotTimer = 0;
@@ -5794,9 +5989,22 @@ function updateEnemies() {
             // ── 2페이즈 AI (1페이즈 패턴·점프 완전 우회) ────────────
             // ══════════════════════════════════════════════════════
             if (e._phase2Active) {
-                // ── 체력 10% 미만: 마지막 패턴 강제 발동 ──
-                if (!e._finalPatternActive && (e.hp / e.maxHp) < 0.10) {
-                    _triggerBossFinalPattern(e);
+                // ── 체력 10% 미만: 마지막 패턴 대기 플래그 세우기 ──
+                if (!e._finalPatternActive && !e._finalPatternPending && (e.hp / e.maxHp) < 0.10) {
+                    e._finalPatternPending = true;
+                    e.hp = e.maxHp * 0.10;          // 체력 10%로 동결
+                    e._roarInvincible = true;        // 무적 (깜빡임 없음)
+                }
+
+                // 대기 중: 체력 동결 유지, 현재 공격이 idle로 돌아오면 패턴 발동
+                if (e._finalPatternPending && !e._finalPatternActive) {
+                    e.hp = e.maxHp * 0.10;           // 매 프레임 동결
+                    // p2a1Phase === 'idle' 이면 공격 사이 인터벌 → 바로 발동
+                    if (e._p2a1Phase === 'idle') {
+                        e._finalPatternPending = false;
+                        e._roarInvincible      = false;
+                        _triggerBossFinalPattern(e);
+                    }
                 }
                 // 마지막 패턴 진행 중이면 다른 패턴 모두 건너뜀
                 if (e._finalPatternActive) {
@@ -5903,7 +6111,11 @@ function updateEnemies() {
                         e._p2a2Alpha = 0;
                         e._p2a2Timer--;
                         if (e._p2a2Timer <= 0) {
-                            spawnP2ClawAtTarget(e, e._p2a2Target3X, e._p2a2Target3Y, e._p2a2Angle3, 1.3);
+                            // 십자: 원래 각도 + 수직(+90도) 두 방향 동시 발사
+                            const a1 = e._p2a2Angle3;
+                            const a2 = a1 + Math.PI / 2;
+                            spawnP2ClawAtTarget(e, e._p2a2Target3X, e._p2a2Target3Y, a1, 1.3);
+                            spawnP2ClawAtTarget(e, e._p2a2Target3X, e._p2a2Target3Y, a2, 1.3);
                             e._p2a2Phase = 'strike3';
                             e._p2a2Timer = 20;
                         }
@@ -6070,12 +6282,19 @@ function updateEnemies() {
                         if (e._p2a4Timer <= 0) {
                             e._p2a4Phase     = 'flash';
                             e._p2a4FlashTimer = 42;
-                            // 가시 위치 미리 결정 (일정 간격)
-                            const spikeGap  = 151;
-                            const spikeCount = Math.floor(world.width / spikeGap) + 1;
+                            // 가시 위치: 플레이어 X를 기준으로 spikeGap 간격 확장
+                            // → 가시 하나가 반드시 플레이어 위치에 맞음
+                            const spikeGap   = 151;
+                            const playerCX   = player.x + player.width / 2;
                             e._p2a4Spikes = [];
-                            for (let si = 0; si < spikeCount; si++) {
-                                e._p2a4Spikes.push({ x: si * spikeGap + spikeGap / 2 });
+                            // 플레이어 위치를 기준점으로, 맵 전체를 양방향으로 채움
+                            const leftCount  = Math.ceil(playerCX / spikeGap);
+                            const rightCount = Math.ceil((world.width - playerCX) / spikeGap);
+                            for (let si = -leftCount; si <= rightCount; si++) {
+                                const sx = playerCX + si * spikeGap;
+                                if (sx >= 0 && sx <= world.width) {
+                                    e._p2a4Spikes.push({ x: sx });
+                                }
                             }
                         }
 
@@ -6087,6 +6306,8 @@ function updateEnemies() {
                             e._p2a4Phase      = 'spike';
                             e._p2a4SpikeTimer = 55;   // 가시 유지 시간
                             e._p2a4SpikeUp    = true;
+                            // 가시 솟아오를 때 파티클 이펙트
+                            (e._p2a4Spikes || []).forEach(sp => spawnSpikeBurstAt(sp.x));
                             // 가시 피해 판정
                             e._p2a4Spikes.forEach(sp => {
                                 const sw = 13;
@@ -6136,6 +6357,8 @@ function updateEnemies() {
                             e._p2a4SpikeTimer = 55;
                             e._p2a4SpikeUp    = true;
                             e._p2a4Hit2Done   = true;
+                            // 가시 솟아오를 때 파티클 이펙트
+                            (e._p2a4Spikes2 || []).forEach(sp => spawnSpikeBurstAt(sp.x));
                             // 2타 피해 판정
                             (e._p2a4Spikes2 || []).forEach(sp => {
                                 const sw = 13;
@@ -6875,6 +7098,13 @@ function updateEnemies() {
                         if (e.dx > 0) e.x = plat.x - e.width;
                         else          e.x = plat.x + plat.width;
                         e.dx = 0;
+                        // atk3 jump 중 벽에 부딪히면 windup으로 강제 전환
+                        if (e._atk3Phase === 'jump') {
+                            e.dy = 0;
+                            e._atk3Phase       = 'windup';
+                            e._atk3WindupTimer = e.atk3WindupDur;
+                            e._atk3HitDone     = false;
+                        }
                     }
                 } else if (pt === 'solid' || pt === 'platform') {
                     if (pt === 'platform' && e._leapIgnorePlatforms) return;
@@ -7044,7 +7274,7 @@ function drawEnemies() {
         const deadAlpha = e.isDead ? Math.max(0, 1 - e.deadTimer / 40) : 1;
         if (deadAlpha <= 0) return;
 
-        const blinkVisible = !e.isInvincible || Math.floor(Date.now() / 80) % 2 === 0;
+        const blinkVisible = e._roarInvincible || !e.isInvincible || Math.floor(Date.now() / 80) % 2 === 0;
         // 페이즈 전환 연출 중에는 보스 깜빡임 없이 항상 표시
         const isPhaseTransition = e.type === 'boss' &&
             (bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done');
@@ -7188,6 +7418,8 @@ function drawEnemies() {
                 const ph = e._finalPatternPhase;
                 // 숨겨야 할 페이즈
                 const hidden = ph === 'active' || ph === 'intro'
+                    || ph === 'prelude'
+                    || ph === 'wave_range' || ph === 'wave_slash'
                     || e._fpCrackPhase === 'wait1' || e._fpCrackPhase === 'crack';
                 if (hidden) return;
 
@@ -7196,7 +7428,7 @@ function drawEnemies() {
                     const useStand = (ph === 'done');
                     const imgKey2  = useStand ? e.imgStand : e.imgP2Jump1;
                     const dH = useStand ? BH2 * 1.3 : BH2 / 0.88;
-                    const dW = useStand ? dH : dH * (457 / 451);
+                    const dW = useStand ? dH * (432 / 465) : dH * (476 / 411);
                     const img = sprites[imgKey2];
                     const dx = e.x - (dW - e.width) / 2;
                     const dy = (e.y + e.height) - dH;
@@ -7251,30 +7483,30 @@ function drawEnemies() {
             // ── 2페이즈 p2_attack1 전용 스프라이트 ─────────────────
             if (e._phase2Active && e._p2a1Phase !== undefined) {
                 if (e._p2a1Phase === 'appear') {
-                    // 대각선 하강: p2 전용 jump2
+                    // 대각선 하강: p2 전용 jump2  (500×446)
                     bossImgKey = e.imgP2Jump2;
                     drawH = BH / 0.82;
-                    drawW = drawH * (500 / 500);
+                    drawW = drawH * (500 / 446);
                 } else if (e._p2a1Phase === 'windup') {
-                    // 윈드업: p2 전용 attack1_1
+                    // 윈드업: p2 전용 attack1_1  (437×427)
                     bossImgKey = e.imgP2Atk1_1;
                     drawH = BH * (9 / 8) * 0.85;
-                    drawW = drawH * (584 / 341);
+                    drawW = drawH * (437 / 427);
                 } else if (e._p2a1Phase === 'dash') {
-                    // 돌진 중: p2 전용 attack1_2
+                    // 돌진 중: p2 전용 attack1_2  (542×255)
                     bossImgKey = e.imgP2Atk1_2;
                     drawH = (BH / 0.9375) * 0.85;
-                    drawW = drawH * (674 / 305);
+                    drawW = drawH * (542 / 255);
                 } else if (e._p2a1Phase === 'post' || e._p2a1Phase === 'endvanish') {
-                    // 후딜 / 소멸: p2 전용 jump1
+                    // 후딜 / 소멸: p2 전용 jump1  (476×411)
                     bossImgKey = e.imgP2Jump1;
                     drawH = BH / 0.88;
-                    drawW = drawH * (457 / 451);
+                    drawW = drawH * (476 / 411);
                 } else {
-                    // idle / vanish: 기본 stand
+                    // idle / vanish: 기본 stand  (stand2_3: 432×465)
                     bossImgKey = e.imgStand;
                     drawH = BH * 1.3;
-                    drawW = drawH;
+                    drawW = drawH * (432 / 465);
                 }
             } else if (e._atk3Phase === 'windup') {
                 // 공중 정지 예고: boss_attack3_1 (1.2× 스케일)
@@ -7360,9 +7592,9 @@ function drawEnemies() {
                 drawH = e.state === 'walk' ? BH * 1.105 : BH * 1.3;
                 // stand2 전환 스프라이트는 원본 비율대로 drawW 산출 (height 고정)
                 const _stand2Ratios = {
-                    'BOSS_STAND2_1': 307 / 462,
-                    'BOSS_STAND2_2': 292 / 449,
-                    'BOSS_STAND2_3': 253 / 477,
+                    'BOSS_STAND2_1': 307 / 462,   // 미측정, 기존 유지
+                    'BOSS_STAND2_2': 292 / 449,   // 미측정, 기존 유지
+                    'BOSS_STAND2_3': 432 / 465,   // 실측: 432×465
                 };
                 if (_stand2Ratios[bossImgKey] !== undefined) {
                     drawW = drawH * _stand2Ratios[bossImgKey];
@@ -7421,27 +7653,81 @@ function drawEnemies() {
                 const tX       = isR3 ? e._p2a2Target3X : (isR2 ? e._p2a2Target2X : e._p2a2Target1X);
                 const tY       = isR3 ? e._p2a2Target3Y : (isR2 ? e._p2a2Target2Y : e._p2a2Target1Y);
                 const aRad     = isR3 ? e._p2a2Angle3   : (isR2 ? e._p2a2Angle2   : e._p2a2Angle1);
-                // range1: 32f, range2: 22f, range3: 27f 기준
                 const totalT   = isR3 ? 27 : (isR2 ? 22 : 32);
                 const ratio    = e._p2a2Timer / totalT;
                 const pulse    = 0.5 + 0.5 * Math.sin(Date.now() / 70);
                 const alpha    = (1 - ratio * 0.5) * (0.30 + 0.20 * pulse);
-                // 3번째 타격: 범위 1.3배
                 const scale    = isR3 ? 1.3 : 1.0;
                 const maxLen   = 500 * scale;
                 const halfLen  = maxLen / 2;
                 const thick    = e.height * 0.65 * scale;
 
                 ctx.save();
-                ctx.globalAlpha = alpha;
-                ctx.translate(tX, tY);
-                ctx.rotate(aRad);
-                ctx.fillStyle   = isR3 ? '#ff6600' : '#ff2020';
-                ctx.fillRect(-halfLen, -thick / 2, halfLen * 2, thick);
-                ctx.globalAlpha = Math.min(1, alpha * 2.5);
-                ctx.strokeStyle = isR3 ? '#ffaa44' : '#ff6060';
-                ctx.lineWidth   = isR3 ? 3.5 : 2.5;
-                ctx.strokeRect(-halfLen, -thick / 2, halfLen * 2, thick);
+
+                if (isR3) {
+                    // 십자형: offscreen에 합집합 그려서 겹침 중앙 중복 방지
+                    const os   = document.createElement('canvas');
+                    os.width   = ctx.canvas.width;
+                    os.height  = ctx.canvas.height;
+                    const oc   = os.getContext('2d');
+
+                    // 메인 ctx의 현재 transform 복사 (scale+translate 이미 적용된 상태)
+                    const tf = ctx.getTransform();
+                    oc.setTransform(tf.a, tf.b, tf.c, tf.d, tf.e, tf.f);
+
+                    // 축1 (원래 각도)
+                    oc.save();
+                    oc.translate(tX, tY);
+                    oc.rotate(aRad);
+                    oc.fillStyle = '#ff6600';
+                    oc.fillRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                    oc.restore();
+
+                    // 축2 (수직)
+                    oc.save();
+                    oc.translate(tX, tY);
+                    oc.rotate(aRad + Math.PI / 2);
+                    oc.fillStyle = '#ff6600';
+                    oc.fillRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                    oc.restore();
+
+                    // 합집합을 메인에 합성 (identity로 리셋 후 drawImage)
+                    ctx.save();
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.globalAlpha = alpha;
+                    ctx.drawImage(os, 0, 0);
+                    ctx.restore();
+
+                    // 외곽선 (월드 좌표 그대로)
+                    ctx.globalAlpha = Math.min(1, alpha * 2.5);
+                    ctx.strokeStyle = '#ffaa44';
+                    ctx.lineWidth   = 3.5;
+
+                    ctx.save();
+                    ctx.translate(tX, tY);
+                    ctx.rotate(aRad);
+                    ctx.strokeRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                    ctx.restore();
+
+                    ctx.save();
+                    ctx.translate(tX, tY);
+                    ctx.rotate(aRad + Math.PI / 2);
+                    ctx.strokeRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                    ctx.restore();
+
+                } else {
+                    // 일반 (range1/range2)
+                    ctx.globalAlpha = alpha;
+                    ctx.translate(tX, tY);
+                    ctx.rotate(aRad);
+                    ctx.fillStyle   = '#ff2020';
+                    ctx.fillRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                    ctx.globalAlpha = Math.min(1, alpha * 2.5);
+                    ctx.strokeStyle = '#ff6060';
+                    ctx.lineWidth   = 2.5;
+                    ctx.strokeRect(-halfLen, -thick / 2, halfLen * 2, thick);
+                }
+
                 ctx.restore();
             }
 
@@ -7842,6 +8128,58 @@ const ultimate = {
 // ── 보스 공격1 돌 파티클 ─────────────────────────────────────────
 const bossStoneParticles = [];
 
+// ── 가시 튀는 이펙트 파티클 ─────────────────────────────────────────────
+const spikeburstParticles = [];
+
+function spawnSpikeBurstAt(worldX) {
+    const groundY = world.height - 60;
+    const count   = 6 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < count; i++) {
+        const angle  = -Math.PI * 0.5 + (Math.random() - 0.5) * Math.PI * 0.6; // 위쪽 ±54°
+        const speed  = 12 + Math.random() * 18;
+        spikeburstParticles.push({
+            x:       worldX + (Math.random() - 0.5) * 16,
+            y:       groundY,
+            dx:      Math.cos(angle) * speed,
+            dy:      Math.sin(angle) * speed,
+            life:    1.0,
+            decay:   0.032 + Math.random() * 0.018,
+            size:    4 + Math.random() * 7,
+            color:   Math.random() < 0.5
+                ? `hsl(${200 + Math.random() * 30},90%,${55 + Math.random() * 20}%)`  // 파란
+                : `rgba(180,230,255,1)`,
+        });
+    }
+}
+
+function updateSpikeburstParticles() {
+    for (let i = spikeburstParticles.length - 1; i >= 0; i--) {
+        const p = spikeburstParticles[i];
+        p.x   += p.dx;
+        p.y   += p.dy;
+        p.dy  += 0.7;
+        p.dx  *= 0.96;
+        p.life -= p.decay;
+        if (p.life <= 0) spikeburstParticles.splice(i, 1);
+    }
+}
+
+function drawSpikeburstParticles() {
+    if (spikeburstParticles.length === 0) return;
+    ctx.save();
+    spikeburstParticles.forEach(p => {
+        const sx = (p.x - camera.x) * SCALE;
+        const sy = (p.y - cameraY)  * SCALE;
+        ctx.globalAlpha = p.life * 0.9;
+        ctx.fillStyle   = p.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.size * SCALE * 0.012 * p.life + 2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
+}
+
 function spawnBossStoneParticles(bossFrontX, atk1RangeX, hitTop, hitBottom, count = 5) {
     // 공격 범위 내 균등 간격 + 랜덤 오프셋
     const segW    = atk1RangeX / count;
@@ -8057,36 +8395,97 @@ function drawP2A4Effects(boss) {
     function renderSpikes(spikes, spikeTimer) {
         if (!spikes || !boss._p2a4SpikeUp) return;
         const SPIKE_TOTAL = 55;
-        const st    = spikeTimer || 0;
-        const riseT = SPIKE_TOTAL - st;
-        const rise  = Math.min(1, riseT / 8);
+        const st     = spikeTimer || 0;
+        const riseT  = SPIKE_TOTAL - st;
+        const rise   = Math.min(1, riseT / 8);
         const vanish = st < 10 ? st / 10 : 1;
         const alpha  = vanish;
         const groundY = canvas.height;
-        const spikeH  = groundY * rise;
-        const spikeW  = 18;
+        const fullH   = groundY * rise;
+        const spikeW  = 18;   // 히트박스 폭 유지
 
         spikes.forEach(sp => {
             const sx = (sp.x - camera.x) * SCALE;
             const sy = groundY;
 
-            ctx.globalAlpha = alpha * 0.92;
-            ctx.fillStyle   = '#1133aa';
-            ctx.beginPath();
-            ctx.moveTo(sx - spikeW, sy);
-            ctx.lineTo(sx + spikeW, sy);
-            ctx.lineTo(sx,          sy - spikeH);
-            ctx.closePath();
-            ctx.fill();
+            // ── 가시 1개당 3개의 침 ────────────────────────────────
+            // 중앙 메인 침 (가장 길고 뾰족), 좌우 보조 침
+            const prongs = [
+                { offX: 0,           h: fullH,        w: 7,  alpha: 0.95 },  // 중앙 메인
+                { offX: -spikeW * 0.55, h: fullH * 0.72, w: 4,  alpha: 0.75 },  // 왼쪽 보조
+                { offX:  spikeW * 0.55, h: fullH * 0.72, w: 4,  alpha: 0.75 },  // 오른쪽 보조
+            ];
 
-            ctx.globalAlpha = alpha;
-            ctx.strokeStyle = '#44aaff';
-            ctx.lineWidth   = 2;
+            prongs.forEach(({ offX, h, w, alpha: pAlpha }) => {
+                const px = sx + offX;
+
+                // 본체 그라디언트 — 적당히 빛나는 청색
+                const grad = ctx.createLinearGradient(px, sy, px, sy - h);
+                grad.addColorStop(0.0,  `rgba(20,50,160,${alpha * pAlpha})`);
+                grad.addColorStop(0.35, `rgba(40,100,220,${alpha * pAlpha})`);
+                grad.addColorStop(0.7,  `rgba(80,160,240,${alpha * pAlpha * 0.9})`);
+                grad.addColorStop(1.0,  `rgba(140,200,255,${alpha * pAlpha * 0.8})`);
+
+                // 외부 글로우 (은은하게)
+                const glowGrad2 = ctx.createLinearGradient(px, sy, px, sy - h);
+                glowGrad2.addColorStop(0.0, `rgba(40,100,220,0)`);
+                glowGrad2.addColorStop(0.5, `rgba(80,160,255,${alpha * pAlpha * 0.18})`);
+                glowGrad2.addColorStop(1.0, `rgba(120,190,255,${alpha * pAlpha * 0.12})`);
+
+                ctx.globalAlpha = 1;
+
+                // 글로우 레이어
+                ctx.fillStyle = glowGrad2;
+                ctx.beginPath();
+                ctx.moveTo(px - w * 2.2, sy);
+                ctx.lineTo(px + w * 2.2, sy);
+                ctx.quadraticCurveTo(px + w * 0.5, sy - h * 0.6, px, sy - h * 0.98);
+                ctx.quadraticCurveTo(px - w * 0.5, sy - h * 0.6, px - w * 2.2, sy);
+                ctx.closePath();
+                ctx.fill();
+
+                // 본체
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.moveTo(px - w, sy);
+                ctx.lineTo(px + w, sy);
+                ctx.quadraticCurveTo(px + w * 0.3, sy - h * 0.6, px, sy - h);
+                ctx.quadraticCurveTo(px - w * 0.3, sy - h * 0.6, px - w, sy);
+                ctx.closePath();
+                ctx.fill();
+
+                // 중앙 광택 선 (은은하게)
+                ctx.globalAlpha = alpha * pAlpha * 0.50;
+                ctx.strokeStyle = `rgba(180,220,255,1)`;
+                ctx.lineWidth   = 1.4;
+                ctx.lineCap     = 'round';
+                ctx.beginPath();
+                ctx.moveTo(px - w * 0.15, sy - h * 0.05);
+                ctx.quadraticCurveTo(px - w * 0.05, sy - h * 0.55, px, sy - h);
+                ctx.stroke();
+
+                // 외곽 엣지
+                ctx.globalAlpha = alpha * pAlpha * 0.60;
+                ctx.strokeStyle = `rgba(100,180,255,1)`;
+                ctx.lineWidth   = 1.0;
+                ctx.beginPath();
+                ctx.moveTo(px - w, sy);
+                ctx.quadraticCurveTo(px - w * 0.3, sy - h * 0.6, px, sy - h);
+                ctx.quadraticCurveTo(px + w * 0.3, sy - h * 0.6, px + w, sy);
+                ctx.stroke();
+            });
+
+            // 바닥 글로우 (솟아오르는 근원 효과)
+            const glowR = spikeW * 1.8 * rise;
+            const glowGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowR);
+            glowGrad.addColorStop(0,   `rgba(80,160,255,${alpha * 0.40})`);
+            glowGrad.addColorStop(0.5, `rgba(50,110,220,${alpha * 0.18})`);
+            glowGrad.addColorStop(1,   `rgba(30,70,180,0)`);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle   = glowGrad;
             ctx.beginPath();
-            ctx.moveTo(sx - spikeW, sy);
-            ctx.lineTo(sx,          sy - spikeH);
-            ctx.lineTo(sx + spikeW, sy);
-            ctx.stroke();
+            ctx.ellipse(sx, sy, glowR, glowR * 0.35, 0, 0, Math.PI * 2);
+            ctx.fill();
         });
     }
 
@@ -8104,11 +8503,10 @@ const p2a3Shockwaves = [];
 
 function _spawnP2A3Shockwave(e, enraged = false) {
     const originX = e.x + e.width / 2;
-    const groundY = e.y + e.height;
-    // 강화: 플랫폼 높이(820) 기준으로 충격파 높이 계산
-    const shockH  = enraged
-        ? Math.max(60, groundY - 820)   // 바닥~플랫폼 높이
-        : 22;
+    const groundY = e.y + e.height;   // 보스 발 위치 (실제 바닥)
+    // 강화: sTop이 플랫폼 위 플레이어(pTop≈740)보다 위여야 맞음
+    // groundY≈1020, 플레이어 pTop≈740 → height > 280. 320으로 여유있게
+    const shockH  = enraged ? 260 : 22;
     const shockSpd = 14;
     const shockW   = 8;
     [-1, 1].forEach(dir => {
@@ -8134,10 +8532,17 @@ function updateP2A3Shockwaves() {
             p2a3Shockwaves.splice(i, 1); continue;
         }
         if (!s.hitDone) {
-            const px = player.x + player.width  / 2;
-            const py = player.y + player.height / 2;
-            if (Math.abs(px - s.x) < s.width + player.width / 2 &&
-                py + player.height / 2 > s.y - s.height && !player.isInvincible) {
+            const pLeft  = player.x;
+            const pRight = player.x + player.width;
+            const pTop   = player.y;
+            const pBot   = player.y + player.height;
+            const sLeft  = s.x - s.width - player.width / 2;
+            const sRight = s.x + s.width + player.width / 2;
+            const sTop   = s.y - s.height;
+            const sBot   = s.y;
+            const overlapX = pRight > sLeft && pLeft < sRight;
+            const overlapY = pBot   > sTop  && pTop < sBot;
+            if (overlapX && overlapY && !player.isInvincible) {
                 player.hp = Math.max(0, player.hp - 12);
                 player.isInvincible = true; player.invincibleTimer = 45;
                 player.dx = s.dir * 8; player.dy = -5;
@@ -8586,7 +8991,7 @@ function spawnBossDashSlash(e, isP2 = false) {
         const cy = bossT + (bossB - bossT) * (0.15 + Math.random() * 0.70);
         const cx = dir > 0 ? bossL + Math.random() * e.width * 0.5
                            : bossR - Math.random() * e.width * 0.5;
-        const len   = 60 + Math.random() * 90;
+        const len   = 120 + Math.random() * 200;
         const speed = Math.abs(e.dx);
 
         slashEffects.push({
@@ -8595,7 +9000,7 @@ function spawnBossDashSlash(e, isP2 = false) {
             life:  1.0,
             decay: 0.16 + Math.random() * 0.08,
             thick: 1.5  + Math.random() * 2.5,
-            isP2,   // p2 돌진이면 슬래시와 동일 색상
+            isP2,
         });
     }
 }
@@ -8629,6 +9034,82 @@ function _cancelAllP2Attacks(e) {
     e.state = 'idle';
 }
 
+// ── 마지막 패턴 사전 wave 헬퍼 ───────────────────────────────────────────
+function _fpStartWave(e, waveIdx) {
+    e._fpWaveIndex  = waveIdx;
+    e._fpWaveCount  = 8;   // 항상 8방향 (45°씩 균등)
+    e._finalPatternPhase = 'wave_range';
+    e._finalPatternTimer = 42 - waveIdx * 4;
+    e._fpWaveCX = player.x + player.width  / 2;
+    e._fpWaveCY = player.y + player.height / 2;
+    e._fpWaveAngles = _fpCalcAngles(e);
+}
+
+function _fpCalcAngles(e) {
+    const count  = e._fpWaveCount;
+    const step   = (Math.PI * 2) / count;      // 45°
+    const offset = Math.random() * Math.PI * 2; // 전체 덩어리 랜덤 회전
+    const angles = [];
+    for (let i = 0; i < count; i++) {
+        angles.push(offset + step * i);
+    }
+    return angles;
+}
+
+function _fpFireWave(e) {
+    // 예고 시작 시 저장된 플레이어 위치 그대로 사용
+    const cx = e._fpWaveCX;
+    const cy = e._fpWaveCY;
+    const wi  = e._fpWaveIndex || 1;
+    const len   = 2200 + wi * 200;
+    const thick = 22   + wi * 6;
+    const decay = 0.018 - wi * 0.002;
+
+    e._fpWaveAngles.forEach(angleRad => {
+        if (!player.isInvincible) {
+            const pcx = player.x + player.width  / 2;
+            const pcy = player.y + player.height / 2;
+            const dx  = pcx - cx;
+            const dy  = pcy - cy;
+            const cosA = Math.cos(angleRad);
+            const sinA = Math.sin(angleRad);
+            const lx = Math.abs( dx * cosA + dy * sinA);
+            const ly = Math.abs(-dx * sinA + dy * cosA);
+            if (lx < len / 2 * 0.9 && ly < thick * 0.8) {
+                player.hp = Math.max(0, player.hp - 14);
+                player.isInvincible    = true;
+                player.invincibleTimer = 50;
+                player.dx = (pcx < cx ? -1 : 1) * 8;
+                player.dy = -5;
+            }
+        }
+
+        slashEffects.push({
+            type:         'p2chase',
+            cx, cy,
+            angle:        angleRad,
+            length:       len,
+            life:         1.0,
+            decay:        decay,
+            width:        thick,
+            drawProgress: 0,
+            drawSpeed:    0.85,
+            dir:          Math.cos(angleRad) >= 0 ? 1 : -1,
+            hitChecked:   true,   // 위에서 직접 처리했으므로 슬래시 피해 중복 방지
+            hitLaneX:     cx - len / 2,
+            hitLaneY:     cy - 80,
+            hitLaneW:     len,
+            hitLaneH:     160,
+            clawAngle:    angleRad,
+            clawHalfLen:  len / 2,
+            clawThick:    thick * 2,
+            isFirstRow:   true,
+            isFinalBurst: false,
+            isFpWave:     true,
+        });
+    });
+}
+
 // 마지막 패턴 발동 (외부/단축키에서 호출)
 function _triggerBossFinalPattern(e) {
     _cancelAllP2Attacks(e);
@@ -8636,9 +9117,12 @@ function _triggerBossFinalPattern(e) {
     e.x = world.width / 2 - e.width / 2;
     e.y = world.height - 60 - e.height;
     e.dx = 0; e.dy = 0;
-    e._finalPatternActive = true;
-    e._finalPatternPhase  = 'center';   // 중앙 등장 대기 → roar → active
-    e._finalPatternTimer  = 20;         // center 대기 시간
+    e._finalPatternActive  = true;
+    e._finalPatternPending = false;   // 대기 해제
+    e._roarInvincible      = false;   // 무적 해제
+    e._dotTimer            = 0;       // 도트 데미지 타이머 리셋 (재활성화)
+    e._finalPatternPhase  = 'center';
+    e._finalPatternTimer  = 20;
     e._finalPatternTick   = 0;
     e._roarRingTimer      = 0;
     e._roarRings          = [];
@@ -8670,7 +9154,7 @@ function _updateBossFinalPattern(e) {
 
     } else if (e._finalPatternPhase === 'roar') {
         e.dx = 0; e.dy = 0;
-        e.isInvincible = true;   // roar 중 피격 무적
+        e._roarInvincible = true;   // roar 중 피격 무적 (깜빡임 없음, 도트 통과)
         e._finalPatternTimer--;
 
         // 링 스폰: 처음엔 빠르게, 점점 간격 벌어지게 (총 6~7개)
@@ -8691,9 +9175,49 @@ function _updateBossFinalPattern(e) {
         }
 
         if (e._finalPatternTimer <= 0) {
-            e.isInvincible = false;
-            e._finalPatternPhase = 'active';
-            e._finalPatternTimer = 0;
+            e._roarInvincible = false;
+            e._finalPatternPhase = 'prelude';
+            e._finalPatternTimer = 35;   // gather 파티클 표시 시간
+            // gather 파티클 스폰 (공격3 강화와 같은 시스템 재활용)
+            spawnP2A3GatherParticles(e);
+        }
+
+    } else if (e._finalPatternPhase === 'prelude') {
+        e.dx = 0; e.dy = 0;
+        e._roarInvincible = true;
+        updateP2A3GatherParticles();
+        e._finalPatternTimer--;
+        if (e._finalPatternTimer <= 0) {
+            p2a3GatherParticles.length = 0;
+            e._roarInvincible = false;
+            _fpStartWave(e, 1);
+        }
+
+    } else if (e._finalPatternPhase === 'wave_range') {
+        e.dx = 0; e.dy = 0;
+        e._roarInvincible = true;
+        e._finalPatternTimer--;
+        if (e._finalPatternTimer <= 0) {
+            _fpFireWave(e);
+            e._finalPatternPhase = 'wave_slash';
+            e._finalPatternTimer = 40;
+        }
+
+    } else if (e._finalPatternPhase === 'wave_slash') {
+        e.dx = 0; e.dy = 0;
+        e._roarInvincible = true;
+        e._finalPatternTimer--;
+        if (e._finalPatternTimer <= 0) {
+            e._fpWaveIndex = (e._fpWaveIndex || 1) + 1;
+            if (e._fpWaveIndex <= 3) {
+                _fpStartWave(e, e._fpWaveIndex);
+            } else {
+                e._roarInvincible  = false;
+                e._fpWaveIndex     = 0;
+                e._fpWaveAngles    = null;
+                e._finalPatternPhase = 'active';
+                e._finalPatternTimer = 0;
+            }
         }
 
     } else if (e._finalPatternPhase === 'intro') {
@@ -9203,15 +9727,23 @@ function drawSlashEffects() {
             ctx.moveTo(0, 0);
             ctx.lineTo(-dir * len, 0);
             ctx.strokeStyle = s.isP2 ? 'rgba(100,180,255,0.35)' : 'rgba(200,225,255,0.4)';
-            ctx.lineWidth   = thick * 4;
+            ctx.lineWidth   = thick * 5;
             ctx.lineCap     = 'round';
+            ctx.stroke();
+
+            // 중간 글로우
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-dir * len, 0);
+            ctx.strokeStyle = s.isP2 ? 'rgba(140,200,255,0.20)' : 'rgba(220,240,255,0.18)';
+            ctx.lineWidth   = thick * 2.5;
             ctx.stroke();
 
             // 핵심 선
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(-dir * len, 0);
-            ctx.strokeStyle = s.isP2 ? 'rgba(120,200,255,0.95)' : 'rgba(255,255,255,0.95)';
+            ctx.strokeStyle = s.isP2 ? 'rgba(160,220,255,0.95)' : 'rgba(255,255,255,0.95)';
             ctx.lineWidth   = thick;
             ctx.lineCap     = 'round';
             ctx.stroke();
@@ -9260,6 +9792,7 @@ function doUltHit(isCross) {
 
 function handleQKey() {
     if (dialogue.active || tutorial.active) return;
+    if (bossHalfSeq.phase !== 'idle' && bossHalfSeq.phase !== 'done') return;
     if (player.gauge < player.maxGauge) return;
     if (player.ultPhase !== 'none') return;
 
@@ -10438,6 +10971,7 @@ MAP_DATA.push({
         // ceilingTransition.switch 단계에서 직접 좌표 설정하므로 여기선 리셋만
         player.dx      = 0;
         player.grounded = false;
+        cliffReached   = true;   // 절벽 위 최초 도달
     }
 });
 
@@ -10586,17 +11120,50 @@ MAP_DATA.push({
         { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
         { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
 
-        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
-        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
-        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
-        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
-        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+        // ── 왼쪽 입구 구간: 낮은 발판 2개 ───────────────────────────────
+        { x: 300,  y: 560, width: 180, height: 18, type: 'platform' },
+        { x: 620,  y: 480, width: 160, height: 18, type: 'platform' },
+
+        // ── 중앙 갈림목: 위아래 두 경로 ─────────────────────────────────
+        { x: 950,  y: 560, width: 200, height: 18, type: 'platform' },  // 아래 경로
+        { x: 980,  y: 350, width: 200, height: 18, type: 'platform' },  // 위 경로
+
+        // ── 위 경로 연속 발판 ─────────────────────────────────────────
+        { x: 1320, y: 300, width: 160, height: 18, type: 'platform' },
+        { x: 1640, y: 260, width: 180, height: 18, type: 'platform' },
+
+        // ── 아래 경로 연속 발판 ───────────────────────────────────────
+        { x: 1310, y: 530, width: 180, height: 18, type: 'platform' },
+        { x: 1680, y: 470, width: 160, height: 18, type: 'platform' },
+
+        // ── 합류 지점 ────────────────────────────────────────────────
+        { x: 1980, y: 380, width: 240, height: 18, type: 'platform' },
+
+        // ── 오른쪽 끝 높은 발판 (출구 전 마지막 전투) ─────────────────
+        { x: 2400, y: 420, width: 220, height: 18, type: 'platform' },
     ],
 
     signs:   [],
     spikes:  [],
     enemies: [
-        { type: 'enemy1', x: 1450, y: 660 }
+        // 입구 구간 — enemy1 지상 + 발판 위
+        { type: 'enemy1', x:  350, y: 660 },
+        { type: 'enemy1', x:  670, y: 480 },
+
+        // 위 경로 — enemy2 (공중 부양, 화살 위협)
+        { type: 'enemy2', x: 1030, y: 350 },
+        { type: 'enemy2', x: 1380, y: 300 },
+
+        // 아래 경로 — enemy1 발판 위
+        { type: 'enemy1', x: 1000, y: 560 },
+        { type: 'enemy1', x: 1360, y: 530 },
+
+        // 합류 지점 — enemy3 (내려찍기로 압박)
+        { type: 'enemy3', x: 2030, y: 380 },
+
+        // 출구 전 마지막 — enemy1 + enemy2 혼합
+        { type: 'enemy1', x: 2450, y: 420 },
+        { type: 'enemy2', x: 2200, y: 380 },
     ],
     dummies: [],
     transitions: [
@@ -10727,17 +11294,40 @@ MAP_DATA.push({
         { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
         { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
 
-        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
-        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
-        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
-        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
-        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+        // ── 초반 발판: 완만한 오르막 ─────────────────────────────────
+        { x: 350,  y: 560, width: 200, height: 18, type: 'platform' },
+        { x: 720,  y: 490, width: 180, height: 18, type: 'platform' },
+        { x: 1060, y: 420, width: 200, height: 18, type: 'platform' },
+
+        // ── 중앙 섬: 좁은 발판 3개, 빠른 이동 필요 ──────────────────
+        { x: 1380, y: 360, width: 140, height: 18, type: 'platform' },
+        { x: 1620, y: 300, width: 140, height: 18, type: 'platform' },
+        { x: 1860, y: 360, width: 140, height: 18, type: 'platform' },
+
+        // ── 후반: 지상으로 내려오는 구간 ────────────────────────────
+        { x: 2120, y: 450, width: 200, height: 18, type: 'platform' },
+        { x: 2480, y: 540, width: 220, height: 18, type: 'platform' },
     ],
 
     signs:   [],
     spikes:  [],
     enemies: [
-        { type: 'enemy1', x: 1440, y: 660 }
+        // 입구 — enemy1 지상
+        { type: 'enemy1', x:  200, y: 660 },
+        { type: 'enemy1', x:  400, y: 560 },
+
+        // 발판 위 enemy1 연속 — 근접으로 압박
+        { type: 'enemy1', x:  760, y: 490 },
+        { type: 'enemy1', x: 1100, y: 420 },
+
+        // 좁은 발판 구간 — enemy2 (공중에서 화살 방해)
+        { type: 'enemy2', x: 1420, y: 360 },
+        { type: 'enemy2', x: 1660, y: 300 },
+
+        // 후반 내려오는 구간 — enemy1 3마리
+        { type: 'enemy1', x: 1910, y: 360 },
+        { type: 'enemy1', x: 2170, y: 450 },
+        { type: 'enemy1', x: 2650, y: 660 },
     ],
     dummies: [],
     transitions: [
@@ -10780,17 +11370,46 @@ MAP_DATA.push({
         { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
         { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
 
-        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
-        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
-        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
-        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
-        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+        // ── 지그재그 발판: enemy2의 공중 공격을 피하면서 이동 ────────
+        { x: 300,  y: 520, width: 180, height: 18, type: 'platform' },
+        { x: 600,  y: 420, width: 160, height: 18, type: 'platform' },
+        { x: 880,  y: 320, width: 180, height: 18, type: 'platform' },
+
+        // ── 중앙 높은 섬 ────────────────────────────────────────────
+        { x: 1200, y: 240, width: 260, height: 18, type: 'platform' },
+
+        // ── 하강 경로 ─────────────────────────────────────────────
+        { x: 1600, y: 320, width: 160, height: 18, type: 'platform' },
+        { x: 1900, y: 420, width: 180, height: 18, type: 'platform' },
+        { x: 2180, y: 520, width: 200, height: 18, type: 'platform' },
+
+        // ── 오른쪽 지상 구간 (출구 전 전투) ──────────────────────
+        { x: 2500, y: 460, width: 220, height: 18, type: 'platform' },
     ],
 
     signs:   [],
     spikes:  [],
     enemies: [
-        { type: 'enemy2', x: 1440, y: 660 }
+        // 지상 입구 — enemy1 1마리 (빠른 진입 위협)
+        { type: 'enemy1', x:  150, y: 660 },
+
+        // 발판 상승 구간 — enemy2가 공중에서 화살로 방해
+        { type: 'enemy2', x:  340, y: 520 },
+        { type: 'enemy2', x:  640, y: 420 },
+        { type: 'enemy2', x:  920, y: 320 },
+
+        // 중앙 높은 섬 — enemy2 2마리 + enemy3 1마리 (내려찍기 위협)
+        { type: 'enemy2', x: 1250, y: 240 },
+        { type: 'enemy3', x: 1360, y: 240 },
+
+        // 하강 경로 — enemy2
+        { type: 'enemy2', x: 1640, y: 320 },
+        { type: 'enemy2', x: 1940, y: 420 },
+
+        // 출구 전 — enemy1 + enemy3 혼합
+        { type: 'enemy3', x: 2220, y: 520 },
+        { type: 'enemy1', x: 2550, y: 460 },
+        { type: 'enemy1', x: 2700, y: 660 },
     ],
     dummies: [],
     transitions: [
@@ -10833,17 +11452,44 @@ MAP_DATA.push({
         { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
         { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
 
-        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
-        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
-        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
-        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
-        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+        // ── 넓은 발판 구간: enemy3 내려찍기 패턴에 대응하기 충분한 폭 ──
+        { x: 280,  y: 500, width: 280, height: 18, type: 'platform' },
+        { x: 720,  y: 400, width: 300, height: 18, type: 'platform' },
+
+        // ── 중앙 전투 섬 (가장 넓음) ─────────────────────────────────
+        { x: 1160, y: 320, width: 380, height: 18, type: 'platform' },
+
+        // ── 오른쪽 하강 발판 ─────────────────────────────────────────
+        { x: 1700, y: 400, width: 260, height: 18, type: 'platform' },
+        { x: 2080, y: 500, width: 240, height: 18, type: 'platform' },
+
+        // ── 출구 전 지상 전투 구간 (벽 없음) ────────────────────────
+        { x: 2440, y: 480, width: 280, height: 18, type: 'platform' },
     ],
 
     signs:   [],
     spikes:  [],
     enemies: [
-        { type: 'enemy3', x: 1440, y: 660 }
+        // 입구 지상 — enemy1 방어막 역할
+        { type: 'enemy1', x:  160, y: 660 },
+        { type: 'enemy1', x:  330, y: 500 },
+
+        // 넓은 발판 위 — enemy3 1마리씩 (내려찍기 공간 충분)
+        { type: 'enemy3', x:  780, y: 400 },
+
+        // 중앙 전투 섬 — enemy3 2마리 + enemy2 1마리 (공중에서 지원사격)
+        { type: 'enemy3', x: 1220, y: 320 },
+        { type: 'enemy3', x: 1440, y: 320 },
+        { type: 'enemy2', x: 1310, y: 320 },
+
+        // 하강 발판 — enemy3 + enemy1 혼합
+        { type: 'enemy3', x: 1760, y: 400 },
+        { type: 'enemy1', x: 2130, y: 500 },
+
+        // 출구 전 — 전 타입 총집합
+        { type: 'enemy1', x: 2490, y: 480 },
+        { type: 'enemy2', x: 2620, y: 480 },
+        { type: 'enemy3', x: 2650, y: 660 },
     ],
     dummies: [],
     transitions: [
@@ -10870,7 +11516,7 @@ MAP_DATA.push({
     }
 });
 
-// ── 맵 12: 세이브 이후 구간 4 ───────────────────────────────────────────
+// ── 맵 12: 세이브 이후 구간 4 (보스 직전 최종 관문) ─────────────────────
 MAP_DATA.push({
     id: 12,
     worldWidth:  2880,
@@ -10886,17 +11532,47 @@ MAP_DATA.push({
         { x: 2880, y: 0,   width: 60,   height: 720, type: 'wall' },
         { x: 0,    y: 660, width: 2880, height: 60,  type: 'solid' },
 
-        { x: 420,  y: 530, width: 220, height: 18, type: 'platform' },
-        { x: 820,  y: 440, width: 180, height: 18, type: 'platform' },
-        { x: 1280, y: 510, width: 220, height: 18, type: 'platform' },
-        { x: 1760, y: 420, width: 200, height: 18, type: 'platform' },
-        { x: 2260, y: 520, width: 240, height: 18, type: 'platform' }
+        // ── 초반: 계단식 상승 ─────────────────────────────────────
+        { x: 300,  y: 560, width: 160, height: 18, type: 'platform' },
+        { x: 580,  y: 460, width: 160, height: 18, type: 'platform' },
+        { x: 860,  y: 360, width: 160, height: 18, type: 'platform' },
+
+        // ── 중앙 고지 (가장 높음, 최대 압박) ────────────────────────
+        { x: 1140, y: 260, width: 340, height: 18, type: 'platform' },
+
+        // ── 오른쪽: 불규칙한 하강 ─────────────────────────────────
+        { x: 1620, y: 340, width: 160, height: 18, type: 'platform' },
+        { x: 1900, y: 440, width: 200, height: 18, type: 'platform' },
+
+        // ── 최종 전투 발판 (출구 직전) ───────────────────────────
+        { x: 2220, y: 360, width: 440, height: 18, type: 'platform' },
     ],
 
     signs:   [],
     spikes:  [],
     enemies: [
-        { type: 'enemy2', x: 1440, y: 660 }
+        // 지상 입구 — enemy1 2마리 빠른 선제
+        { type: 'enemy1', x:  150, y: 660 },
+        { type: 'enemy1', x:  350, y: 560 },
+
+        // 계단 상승 — enemy2가 위에서 화살로 방해
+        { type: 'enemy2', x:  620, y: 460 },
+        { type: 'enemy2', x:  900, y: 360 },
+
+        // 중앙 고지 — 전 타입 집중 배치 (핵심 전투)
+        { type: 'enemy3', x: 1180, y: 260 },
+        { type: 'enemy2', x: 1310, y: 260 },
+        { type: 'enemy3', x: 1400, y: 260 },
+
+        // 오른쪽 하강 — enemy1 + enemy3
+        { type: 'enemy1', x: 1660, y: 340 },
+        { type: 'enemy3', x: 1950, y: 440 },
+
+        // 최종 전투 발판 — 3타입 전부 (보스 전 마지막 관문)
+        { type: 'enemy1', x: 2280, y: 360 },
+        { type: 'enemy2', x: 2420, y: 360 },
+        { type: 'enemy3', x: 2560, y: 360 },
+        { type: 'enemy1', x: 2720, y: 660 },
     ],
     dummies: [],
     transitions: [
@@ -10910,7 +11586,7 @@ MAP_DATA.push({
         {
             x: 2840, y: 540,
             width: 40, height: 120,
-            toMap: 13, spawnX: 80, spawnY: 580,
+            toMap: 13, spawnX: 120, spawnY: 940,
             direction: 'right',
             requireClear: true,
             groundSpawn: true
@@ -10967,6 +11643,7 @@ MAP_DATA.push({
     onEnter: () => {
         player.dx       = 0;
         player.grounded = false;
+        player.hp       = player.maxHp;   // 보스 방 진입 시 체력 최대 회복
         bossMapReached  = true;
 
         // 기존 BGM 빠르게 페이드아웃
@@ -10978,12 +11655,8 @@ MAP_DATA.push({
             dialogue.active      = true;
             dialogue.cast        = ['STORY1', 'BOSS_STORY1'];
             dialogue.lines       = [
-                { speaker: '???',      text: '너탁경구.',                speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '플레이어', text: '너도탁경구.',              speakerType: 'player', illustKey: 'STORY1'      },
-                { speaker: '???',      text: '탁',                   speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '???',      text: '그 말은 내가 해야 할 것 같은데.', speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
-                { speaker: '플레이어', text: '...',                             speakerType: 'player', illustKey: 'STORY1'      },
-                { speaker: '???',      text: '오냐덤벼라.',                         speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '???',      text: '...',  speakerType: 'npc',    illustKey: 'BOSS_STORY1' },
+                { speaker: '플레이어', text: '...',  speakerType: 'player', illustKey: 'STORY1'      },
             ];
             dialogue.currentLine = 0;
             dialogue.speakerName = dialogue.lines[0].speaker;
